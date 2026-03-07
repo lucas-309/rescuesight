@@ -14,20 +14,6 @@ const toApiUrl = (path: string): string => {
   return `${base}${path}`;
 };
 
-type AssignmentDraft = {
-  unitId: string;
-  dispatcher: string;
-  etaMinutes: string;
-  dispatchNotes: string;
-};
-
-const defaultAssignmentDraft: AssignmentDraft = {
-  unitId: "",
-  dispatcher: "",
-  etaMinutes: "5",
-  dispatchNotes: "",
-};
-
 const defaultDispatchQuestionnaire: CreateDispatchRequest["questionnaire"] = {
   responsiveness: "unresponsive",
   breathing: "abnormal_or_absent",
@@ -86,7 +72,6 @@ export const App = () => {
 
   const [queue, setQueue] = useState<DispatchRequest[]>([]);
   const [queueFilter, setQueueFilter] = useState<DispatchRequestStatus | "all">("all");
-  const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, AssignmentDraft>>({});
 
   const [dispatchLoading, setDispatchLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
@@ -96,9 +81,6 @@ export const App = () => {
 
   const liveSummaryEndpoint = useMemo(() => toApiUrl("/api/cv/live-summary"), []);
   const dispatchRequestsEndpoint = useMemo(() => toApiUrl("/api/dispatch/requests"), []);
-
-  const getDraft = (requestId: string): AssignmentDraft =>
-    assignmentDrafts[requestId] ?? defaultAssignmentDraft;
 
   const refreshLiveSummary = async () => {
     try {
@@ -165,6 +147,12 @@ export const App = () => {
 
   useEffect(() => {
     void refreshQueue(queueFilter);
+    const intervalId = window.setInterval(() => {
+      void refreshQueue(queueFilter);
+    }, 2_000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queueFilter]);
 
@@ -242,65 +230,10 @@ export const App = () => {
     }
   };
 
-  const applyDispatchUpdate = async (
-    requestId: string,
-    payload: {
-      status?: DispatchRequestStatus;
-      assignment?: { unitId: string; dispatcher: string; etaMinutes: number };
-      dispatchNotes?: string;
-    },
-  ) => {
-    const response = await fetch(`${dispatchRequestsEndpoint}/${requestId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      throw new Error(`Dispatch update API returned ${response.status}`);
-    }
-  };
-
-  const dispatchUnit = async (requestId: string) => {
-    const draft = getDraft(requestId);
-    if (!draft.unitId.trim() || !draft.dispatcher.trim()) {
-      setQueueStatus("Unit ID and dispatcher are required to dispatch an EMT unit.");
-      return;
-    }
-
-    const etaMinutes = Number(draft.etaMinutes);
-    if (!Number.isFinite(etaMinutes) || etaMinutes <= 0) {
-      setQueueStatus("ETA minutes must be a positive number.");
-      return;
-    }
-
-    try {
-      setQueueStatus(null);
-      await applyDispatchUpdate(requestId, {
-        assignment: {
-          unitId: draft.unitId.trim(),
-          dispatcher: draft.dispatcher.trim(),
-          etaMinutes,
-        },
-        dispatchNotes: draft.dispatchNotes.trim() || undefined,
-      });
-      setQueueStatus(`Request ${requestId} dispatched to ${draft.unitId.trim()}.`);
-      await refreshQueue(queueFilter);
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
-      setQueueStatus(`Unable to dispatch unit: ${message}`);
-    }
-  };
-
-  const resolveRequest = async (requestId: string) => {
-    try {
-      setQueueStatus(null);
-      await applyDispatchUpdate(requestId, { status: "resolved" });
-      setQueueStatus(`Request ${requestId} marked resolved.`);
-      await refreshQueue(queueFilter);
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
-      setQueueStatus(`Unable to resolve request: ${message}`);
-    }
+  const dispatchUnitPlaceholder = (requestId: string) => {
+    setQueueStatus(
+      `Dispatch EMT clicked for ${requestId}. Placeholder only for now (no backend action yet).`,
+    );
   };
 
   return (
@@ -549,8 +482,6 @@ export const App = () => {
 
         <div className="queue-grid">
           {queue.map((request) => {
-            const draft = getDraft(request.id);
-
             return (
               <article key={request.id} className="queue-card">
                 <header className="queue-card-header">
@@ -586,6 +517,7 @@ export const App = () => {
                   CV signal: {request.personDownSignal.status} ({request.personDownSignal.confidence.toFixed(2)})
                 </p>
                 {request.questionnaire.notes ? <p className="notes">Notes: {request.questionnaire.notes}</p> : null}
+                {request.dispatchNotes ? <p className="notes">Context: {request.dispatchNotes}</p> : null}
 
                 {request.assignment ? (
                   <div className="result-card compact">
@@ -597,82 +529,15 @@ export const App = () => {
                   </div>
                 ) : null}
 
-                {request.status !== "resolved" ? (
-                  <div className="assignment-form">
-                    <input
-                      type="text"
-                      value={draft.unitId}
-                      placeholder="Unit ID"
-                      onChange={(event) =>
-                        setAssignmentDrafts((current) => ({
-                          ...current,
-                          [request.id]: {
-                            ...draft,
-                            unitId: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                    <input
-                      type="text"
-                      value={draft.dispatcher}
-                      placeholder="Dispatcher"
-                      onChange={(event) =>
-                        setAssignmentDrafts((current) => ({
-                          ...current,
-                          [request.id]: {
-                            ...draft,
-                            dispatcher: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                    <input
-                      type="number"
-                      min={1}
-                      value={draft.etaMinutes}
-                      placeholder="ETA min"
-                      onChange={(event) =>
-                        setAssignmentDrafts((current) => ({
-                          ...current,
-                          [request.id]: {
-                            ...draft,
-                            etaMinutes: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                    <textarea
-                      value={draft.dispatchNotes}
-                      placeholder="Dispatch notes"
-                      onChange={(event) =>
-                        setAssignmentDrafts((current) => ({
-                          ...current,
-                          [request.id]: {
-                            ...draft,
-                            dispatchNotes: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                    <div className="actions-row">
-                      <button
-                        type="button"
-                        className="action-button"
-                        onClick={() => void dispatchUnit(request.id)}
-                      >
-                        Dispatch EMT
-                      </button>
-                      <button
-                        type="button"
-                        className="action-button secondary"
-                        onClick={() => void resolveRequest(request.id)}
-                      >
-                        Mark Resolved
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
+                <div className="actions-row">
+                  <button
+                    type="button"
+                    className="action-button"
+                    onClick={() => dispatchUnitPlaceholder(request.id)}
+                  >
+                    Dispatch EMT (placeholder)
+                  </button>
+                </div>
               </article>
             );
           })}

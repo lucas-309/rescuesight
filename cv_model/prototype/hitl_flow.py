@@ -65,6 +65,8 @@ class HitlQuestionnaireSession:
     last_started_ms: int = -10_000_000
     last_submitted_ms: int = -10_000_000
     last_status: str = ""
+    last_submission_success: Optional[bool] = None
+    last_submission_request_id: Optional[str] = None
 
     def maybe_start(self, person_down_possible: bool, timestamp_ms: int) -> bool:
         if not person_down_possible or self.active or self.completed_answers is not None:
@@ -83,6 +85,8 @@ class HitlQuestionnaireSession:
         self.responses = [None, None, None, None]
         self.completed_answers = None
         self.last_started_ms = timestamp_ms
+        self.last_submission_success = None
+        self.last_submission_request_id = None
         self.last_status = status
 
     def reset(self, status: str = "Questionnaire reset.") -> None:
@@ -122,12 +126,16 @@ class HitlQuestionnaireSession:
         self,
         status: str,
         timestamp_ms: int,
+        submitted: Optional[bool] = None,
+        request_id: Optional[str] = None,
     ) -> None:
         self.completed_answers = None
         self.step_index = 0
         self.responses = [None, None, None, None]
         self.active = False
         self.last_submitted_ms = timestamp_ms
+        self.last_submission_success = submitted
+        self.last_submission_request_id = request_id
         self.last_status = status
 
     def current_prompt(self) -> Optional[str]:
@@ -135,16 +143,38 @@ class HitlQuestionnaireSession:
             return None
         return QUESTION_PROMPTS[self.step_index]
 
+    def phase_label(self) -> str:
+        if self.active:
+            return "QUESTIONNAIRE_ACTIVE"
+        if self.completed_answers is not None:
+            return "QUESTIONNAIRE_COMPLETED"
+        if self.last_submission_success is True:
+            return "REQUEST_SENT_TO_DASHBOARD"
+        if self.last_submission_success is False:
+            return "REQUEST_SEND_FAILED"
+        return "WAITING_FOR_PERSON_DOWN"
+
     def overlay_lines(self, api_enabled: bool) -> list[str]:
         lines: list[str] = []
         if self.active:
             prompt = self.current_prompt() or "Questionnaire active."
-            lines.append(f"HITL Q{self.step_index + 1}/{len(QUESTION_PROMPTS)}: {prompt}")
-            lines.append("Controls: Y=yes N=no H=start X=reset")
+            lines.append("=== QUESTIONNAIRE ACTIVE ===")
+            lines.append(f"Q{self.step_index + 1}/{len(QUESTION_PROMPTS)} {prompt}")
+            lines.append("Answer now: Y=yes N=no")
+            lines.append("Other controls: H=start X=reset")
         elif self.completed_answers is not None:
-            lines.append("HITL questionnaire complete. Sending to backend...")
+            lines.append("Questionnaire complete. Sending request to dashboard...")
+        elif self.last_submission_success is True:
+            if self.last_submission_request_id:
+                lines.append(
+                    f"REQUEST SENT TO DASHBOARD (id={self.last_submission_request_id})"
+                )
+            else:
+                lines.append("REQUEST SENT TO DASHBOARD")
+        elif self.last_submission_success is False:
+            lines.append("REQUEST TO DASHBOARD FAILED")
         else:
-            lines.append("HITL waits for person-down hint. Press H to start manually.")
+            lines.append("Waiting for person-down trigger. Press H to start manually.")
             lines.append("Controls: H=start X=reset")
 
         if not api_enabled:

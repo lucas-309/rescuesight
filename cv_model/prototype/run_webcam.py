@@ -341,6 +341,66 @@ def draw_status_panel(frame: np.ndarray, lines: list[str]) -> None:
         text_y += line_height + line_gap
 
 
+def draw_questionnaire_panel(frame: np.ndarray, lines: list[str], active: bool) -> None:
+    if not lines:
+        return
+
+    frame_h, frame_w = frame.shape[:2]
+    panel_x = 10
+    panel_margin_bottom = 10
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.75
+    thickness = 2
+    line_gap = 6
+    pad_x = 14
+    pad_y = 10
+
+    text_sizes = [cv2.getTextSize(line, font, font_scale, thickness)[0] for line in lines]
+    max_width = max((size[0] for size in text_sizes), default=0)
+    line_height = max((size[1] for size in text_sizes), default=0)
+    panel_width = min(frame_w - 20, max_width + pad_x * 2)
+    panel_height = len(lines) * line_height + (len(lines) - 1) * line_gap + pad_y * 2
+    panel_y = max(10, frame_h - panel_height - panel_margin_bottom)
+
+    overlay = frame.copy()
+    if active:
+        fill_color = (16, 48, 120)
+        border_color = (80, 230, 255)
+    else:
+        fill_color = (18, 58, 24)
+        border_color = (112, 232, 132)
+
+    cv2.rectangle(
+        overlay,
+        (panel_x, panel_y),
+        (panel_x + panel_width, panel_y + panel_height),
+        fill_color,
+        -1,
+    )
+    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0.0, frame)
+    cv2.rectangle(
+        frame,
+        (panel_x, panel_y),
+        (panel_x + panel_width, panel_y + panel_height),
+        border_color,
+        2,
+    )
+
+    text_y = panel_y + pad_y + line_height
+    for line in lines:
+        cv2.putText(
+            frame,
+            line,
+            (panel_x + pad_x, text_y),
+            font,
+            font_scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
+        text_y += line_height + line_gap
+
+
 def post_json(
     url: str,
     payload: dict[str, object],
@@ -562,17 +622,39 @@ def main() -> int:
                             signal.frameTimestampMs,
                         ),
                     )
-                    _submitted, submit_status, _response = post_json(
+                    submitted, submit_status, response = post_json(
                         dispatch_request_url, dispatch_payload
                     )
+                    request_id: Optional[str] = None
+                    if response is not None:
+                        request_obj = response.get("request")
+                        if isinstance(request_obj, dict):
+                            maybe_id = request_obj.get("id")
+                            if isinstance(maybe_id, str):
+                                request_id = maybe_id
+                        if request_id is None:
+                            escalation_obj = response.get("backendEscalation")
+                            if isinstance(escalation_obj, dict):
+                                maybe_id = escalation_obj.get("requestId")
+                                if isinstance(maybe_id, str):
+                                    request_id = maybe_id
+
+                    if submitted and request_id:
+                        submit_status = f"Dashboard request queued ({request_id})."
+                    elif submitted:
+                        submit_status = "Dashboard request queued."
+
                     questionnaire.mark_submitted(
                         status=submit_status,
                         timestamp_ms=signal.frameTimestampMs,
+                        submitted=submitted,
+                        request_id=request_id,
                     )
                 else:
                     questionnaire.mark_submitted(
                         status="Questionnaire complete (not submitted: set --api-base-url).",
                         timestamp_ms=signal.frameTimestampMs,
+                        submitted=False,
                     )
 
             frame_h, frame_w = frame.shape[:2]
@@ -611,14 +693,22 @@ def main() -> int:
                 f"api_stream: {live_post_status}",
             ]
             if hitl_enabled:
-                status_lines.extend(
-                    questionnaire.overlay_lines(api_enabled=bool(dispatch_request_url))
-                )
-                status_lines.append("Controls: q=quit y/n=answer h=start x=reset")
+                status_lines.append(f"hitl_phase: {questionnaire.phase_label()}")
+                status_lines.append("Controls: q=quit h=start x=reset")
             else:
                 status_lines.append("HITL questionnaire disabled (--disable-hitl).")
                 status_lines.append("Controls: q=quit")
             draw_status_panel(frame, status_lines)
+
+            if hitl_enabled:
+                questionnaire_lines = questionnaire.overlay_lines(
+                    api_enabled=bool(dispatch_request_url)
+                )
+                draw_questionnaire_panel(
+                    frame,
+                    questionnaire_lines,
+                    active=questionnaire.active,
+                )
 
             if args.print_json and signal.frameTimestampMs - last_json_print_ms >= 1_000:
                 print(json.dumps(signal.to_dict()))

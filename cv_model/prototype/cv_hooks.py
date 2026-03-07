@@ -237,10 +237,12 @@ def _infer_person_down_hint(signal: CVSignal) -> PersonDownHint:
         rationale.append("rhythm classification available")
 
     if signal.visibility == "poor":
-        confidence = min(confidence, 0.25)
+        confidence = min(confidence, 0.32)
 
-    confidence = float(_clamp(confidence, 0.0, 1.0))
-    if confidence >= 0.55:
+    raw_confidence = float(_clamp(confidence, 0.0, 1.0))
+    # Rescale upward so mid-band detections are less likely to stall around ~0.6.
+    confidence = float(_clamp((raw_confidence - 0.15) / 0.70, 0.0, 1.0))
+    if confidence >= 0.45:
         message = "CV indicates a possible person-down context. Confirm with bystander checklist."
         status = "possible"
     else:

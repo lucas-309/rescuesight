@@ -78,12 +78,14 @@ const inferPersonDownSignalFromLiveCv = (
   }
 
   if (signal.visibility === "poor") {
-    confidence = Math.min(confidence, 0.25);
+    confidence = Math.min(confidence, 0.32);
   }
 
-  const bounded = clamp(confidence, 0, 1);
+  const raw = clamp(confidence, 0, 1);
+  // Lift the mid-range so person-down scoring is less likely to plateau around ~0.6.
+  const bounded = clamp((raw - 0.12) / 0.72, 0, 1);
   const status: PersonDownSignal["status"] =
-    bounded >= 0.6 ? "person_down" : bounded <= 0.35 ? "not_person_down" : "uncertain";
+    bounded >= 0.45 ? "person_down" : bounded <= 0.25 ? "not_person_down" : "uncertain";
 
   return {
     status,

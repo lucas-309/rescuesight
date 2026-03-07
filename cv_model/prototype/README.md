@@ -121,7 +121,7 @@ Optional flags:
 - `--post-interval-ms 1000`
 - `--source-device-id quest3-kiosk-01`
 - `--location-label "Main lobby" --location-lat 37.8715 --location-lon -122.2730`
-- `--api-base-url http://127.0.0.1:8080` (enable `POST /api/xr/triage` from webcam loop)
+- `--api-base-url http://127.0.0.1:8080` (enable `POST /api/dispatch/requests` on questionnaire completion)
 - `--disable-hitl` (disable questionnaire trigger)
 - `--questionnaire-cooldown-sec 30`
 
