@@ -78,6 +78,58 @@ namespace RescueSight.UnityHooks
         public string incidentId;
         public IncidentTimelineInput timeline;
         public XrDeviceContext deviceContext;
+        public CvSignalInput cvSignal;
+        public string[] acknowledgedCheckpoints;
+    }
+
+    [Serializable]
+    public class CvSignalInput
+    {
+        public string handPlacementStatus = "unknown";
+        public float placementConfidence = 0.0f;
+        public int compressionRateBpm = 0;
+        public string compressionRhythmQuality = "unknown";
+        public string visibility = "poor";
+        public int frameTimestampMs = 0;
+    }
+
+    [Serializable]
+    public class XrCvHint
+    {
+        public string status;
+        public string directive;
+        public string message;
+    }
+
+    [Serializable]
+    public class XrCvCheckpoint
+    {
+        public string id;
+        public string prompt;
+        public string severity;
+        public string suggestedAction;
+        public bool acknowledged;
+    }
+
+    [Serializable]
+    public class XrCvAssist
+    {
+        public XrCvHint personDownHint;
+        public XrCvHint handPlacementHint;
+        public XrCvHint compressionHint;
+        public XrCvHint visibilityHint;
+        public XrCvCheckpoint[] checkpoints;
+        public bool requiresUserConfirmation;
+        public string safetyNotice;
+        public int frameTimestampMs;
+    }
+
+    [Serializable]
+    public class XrTransitionGate
+    {
+        public bool blocked;
+        public string reason;
+        public string[] requiredCheckpointIds;
     }
 
     [Serializable]
@@ -144,6 +196,8 @@ namespace RescueSight.UnityHooks
         public XrOverlayStep[] overlaySteps;
         public CprGuidance cprGuidance;
         public IncidentTimeline timeline;
+        public XrCvAssist cvAssist;
+        public XrTransitionGate transitionGate;
         public string safetyNotice;
     }
 
@@ -154,7 +208,27 @@ namespace RescueSight.UnityHooks
         public TriageEvaluationResponse triage;
         public XrOverlayStep[] overlaySteps;
         public IncidentTimeline timeline;
+        public XrCvAssist cvAssist;
+        public XrTransitionGate transitionGate;
         public string safetyNotice;
+    }
+
+    [Serializable]
+    public class XrIncidentActionUpdateRequest
+    {
+        public string actionKey;
+        public bool completed;
+        public string aedStatus;
+        public string responderNotes;
+    }
+
+    public static class IncidentActionKeys
+    {
+        public const string EmsCalled = "emsCalled";
+        public const string CprStarted = "cprStarted";
+        public const string AedRequested = "aedRequested";
+        public const string AedArrived = "aedArrived";
+        public const string StrokeOnsetRecorded = "strokeOnsetRecorded";
     }
 
     [Serializable]
@@ -204,13 +278,17 @@ namespace RescueSight.UnityHooks
             TriageAnswers answers,
             IncidentTimelineInput timeline,
             Action<XrTriageHookResponse> onSuccess,
-            Action<string> onError)
+            Action<string> onError,
+            CvSignalInput cvSignal = null,
+            string[] acknowledgedCheckpoints = null)
         {
             var payload = new XrTriageHookRequest
             {
                 answers = answers,
                 incidentId = CurrentIncidentId,
                 timeline = timeline,
+                cvSignal = cvSignal,
+                acknowledgedCheckpoints = acknowledgedCheckpoints,
                 deviceContext = new XrDeviceContext
                 {
                     deviceModel = "meta_quest_3",
@@ -259,6 +337,38 @@ namespace RescueSight.UnityHooks
             };
 
             var path = "/api/incidents/" + UnityWebRequest.EscapeURL(CurrentIncidentId);
+            yield return SendJson("PATCH", path, payload, onSuccess, onError);
+        }
+
+        public IEnumerator SetActionCompleted(
+            string actionKey,
+            bool completed,
+            Action<XrIncidentOverlayResponse> onSuccess,
+            Action<string> onError,
+            string aedStatus = null,
+            string responderNotes = null)
+        {
+            if (string.IsNullOrWhiteSpace(CurrentIncidentId))
+            {
+                onError?.Invoke("No incident id is available. Call SubmitQuest3Triage first.");
+                yield break;
+            }
+
+            if (string.IsNullOrWhiteSpace(actionKey))
+            {
+                onError?.Invoke("actionKey is required.");
+                yield break;
+            }
+
+            var payload = new XrIncidentActionUpdateRequest
+            {
+                actionKey = actionKey,
+                completed = completed,
+                aedStatus = aedStatus,
+                responderNotes = responderNotes
+            };
+
+            var path = "/api/xr/incidents/" + UnityWebRequest.EscapeURL(CurrentIncidentId) + "/actions";
             yield return SendJson("PATCH", path, payload, onSuccess, onError);
         }
 

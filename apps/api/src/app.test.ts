@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import type { Server } from "node:http";
+import type { XrCvAssist } from "@rescuesight/shared";
 import { buildApp } from "./app.js";
 
 const baseAnswers = {
@@ -25,7 +26,65 @@ describe("RescueSight API routes", () => {
   let baseUrl = "";
 
   beforeEach(() => {
-    const { app } = buildApp();
+    const { app } = buildApp({
+      cvEvaluator: async ({ signal, acknowledgedCheckpoints }) => {
+        const acknowledgedSet = new Set(acknowledgedCheckpoints);
+        const checkpoints: XrCvAssist["checkpoints"] = [];
+
+        checkpoints.push({
+          id: "person_down_confirmed",
+          prompt: "Confirm possible person-down context.",
+          severity: "critical",
+          suggestedAction: "Continue guided emergency flow after confirmation.",
+          acknowledged: acknowledgedSet.has("person_down_confirmed"),
+        });
+
+        if (signal.handPlacementStatus !== "correct" && signal.handPlacementStatus !== "unknown") {
+          checkpoints.push({
+            id: "hand_adjusted",
+            prompt: "Confirm hand position adjustment.",
+            severity: "high",
+            suggestedAction: "Adjust hand placement and confirm.",
+            acknowledged: acknowledgedSet.has("hand_adjusted"),
+          });
+        }
+
+        if (signal.compressionRhythmQuality !== "good" && signal.compressionRhythmQuality !== "unknown") {
+          checkpoints.push({
+            id: "compression_adjusted",
+            prompt: "Confirm compression pace adjustment.",
+            severity: "advisory",
+            suggestedAction: "Adjust pace to 100-120 BPM.",
+            acknowledged: acknowledgedSet.has("compression_adjusted"),
+          });
+        }
+
+        const requiresUserConfirmation = checkpoints.some((checkpoint) => !checkpoint.acknowledged);
+        return {
+          personDownHint: {
+            status: "possible",
+            confidence: 0.72,
+            message: "Possible person-down context detected.",
+          },
+          handPlacementHint: {
+            directive: signal.handPlacementStatus === "too_left" ? "move_right" : "hold_position",
+            message: "Adjust hands according to guidance.",
+          },
+          compressionHint: {
+            directive: signal.compressionRhythmQuality === "too_slow" ? "speed_up" : "keep_pace",
+            message: "Keep compression cadence near 100-120 BPM.",
+          },
+          visibilityHint: {
+            status: signal.visibility,
+            message: "Keep torso and hands in view.",
+          },
+          checkpoints,
+          requiresUserConfirmation,
+          safetyNotice: "CV hints are assistive and require user confirmation.",
+          frameTimestampMs: signal.frameTimestampMs,
+        };
+      },
+    });
     server = app.listen(0);
     const address = server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
@@ -247,6 +306,41 @@ describe("RescueSight API routes", () => {
     assert.equal(updatedBody.triage.result.pathway, "suspected_stroke");
     assert.equal(updatedBody.timeline.actionsTaken.emsCalled, true);
 
+    const actionUpdateResponse = await fetch(
+      `${baseUrl}/api/xr/incidents/${createdBody.incidentId}/actions`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionKey: "strokeOnsetRecorded",
+          completed: true,
+          responderNotes: "Onset time captured from witness.",
+        }),
+      },
+    );
+    assert.equal(actionUpdateResponse.status, 200);
+    const actionUpdateBody = (await actionUpdateResponse.json()) as {
+      timeline: {
+        responderNotes: string;
+        actionsTaken: { strokeOnsetRecorded: boolean };
+      };
+      overlaySteps: Array<{ linkedAction?: string; completed?: boolean }>;
+    };
+    assert.equal(
+      actionUpdateBody.timeline.actionsTaken.strokeOnsetRecorded,
+      true,
+    );
+    assert.equal(
+      actionUpdateBody.timeline.responderNotes,
+      "Onset time captured from witness.",
+    );
+    assert.ok(
+      actionUpdateBody.overlaySteps.some(
+        (step) =>
+          step.linkedAction === "strokeOnsetRecorded" && step.completed === true,
+      ),
+    );
+
     const overlayResponse = await fetch(
       `${baseUrl}/api/xr/incidents/${createdBody.incidentId}/overlay`,
     );
@@ -262,6 +356,92 @@ describe("RescueSight API routes", () => {
         (step) => step.linkedAction === "emsCalled" && step.completed === true,
       ),
     );
+  });
+
+  test("xr triage enforces checkpoint gate before critical action transitions", async () => {
+    const triageResponse = await fetch(`${baseUrl}/api/xr/triage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        answers: {
+          ...baseAnswers,
+          responsive: false,
+          breathingNormal: false,
+        },
+        cvSignal: {
+          handPlacementStatus: "too_left",
+          placementConfidence: 0.88,
+          compressionRateBpm: 96,
+          compressionRhythmQuality: "too_slow",
+          visibility: "full",
+          frameTimestampMs: 1731000000,
+        },
+      }),
+    });
+
+    assert.equal(triageResponse.status, 200);
+    const triageBody = (await triageResponse.json()) as {
+      incidentId: string;
+      transitionGate: { blocked: boolean; requiredCheckpointIds: string[] };
+      overlaySteps: Array<{ source: string }>;
+    };
+    assert.equal(triageBody.transitionGate.blocked, true);
+    assert.ok(triageBody.transitionGate.requiredCheckpointIds.includes("person_down_confirmed"));
+    assert.ok(triageBody.overlaySteps.some((step) => step.source === "checkpoint"));
+
+    const blockedActionResponse = await fetch(
+      `${baseUrl}/api/xr/incidents/${triageBody.incidentId}/actions`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionKey: "cprStarted",
+          completed: true,
+        }),
+      },
+    );
+    assert.equal(blockedActionResponse.status, 409);
+
+    const acknowledgedResponse = await fetch(`${baseUrl}/api/xr/triage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        incidentId: triageBody.incidentId,
+        answers: {
+          ...baseAnswers,
+          responsive: false,
+          breathingNormal: false,
+        },
+        cvSignal: {
+          handPlacementStatus: "too_left",
+          placementConfidence: 0.88,
+          compressionRateBpm: 96,
+          compressionRhythmQuality: "too_slow",
+          visibility: "full",
+          frameTimestampMs: 1731000001,
+        },
+        acknowledgedCheckpoints: ["person_down_confirmed", "hand_adjusted"],
+      }),
+    });
+
+    assert.equal(acknowledgedResponse.status, 200);
+    const acknowledgedBody = (await acknowledgedResponse.json()) as {
+      transitionGate: { blocked: boolean };
+    };
+    assert.equal(acknowledgedBody.transitionGate.blocked, false);
+
+    const allowedActionResponse = await fetch(
+      `${baseUrl}/api/xr/incidents/${triageBody.incidentId}/actions`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionKey: "cprStarted",
+          completed: true,
+        }),
+      },
+    );
+    assert.equal(allowedActionResponse.status, 200);
   });
 
   test("xr hook endpoint returns 400 for invalid payload and 404 for unknown incident id", async () => {
@@ -290,6 +470,32 @@ describe("RescueSight API routes", () => {
       `${baseUrl}/api/xr/incidents/missing-incident-id/overlay`,
     );
     assert.equal(missingOverlayResponse.status, 404);
+
+    const invalidActionUpdateResponse = await fetch(
+      `${baseUrl}/api/xr/incidents/missing-incident-id/actions`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionKey: "unsupportedAction",
+          completed: true,
+        }),
+      },
+    );
+    assert.equal(invalidActionUpdateResponse.status, 400);
+
+    const missingActionUpdateResponse = await fetch(
+      `${baseUrl}/api/xr/incidents/missing-incident-id/actions`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionKey: "emsCalled",
+          completed: true,
+        }),
+      },
+    );
+    assert.equal(missingActionUpdateResponse.status, 404);
   });
 
   test("incident endpoints return 400 for invalid payloads", async () => {

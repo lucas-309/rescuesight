@@ -4,18 +4,26 @@ import type {
   PersistIncidentRequest,
   TriageEvaluationResponse,
   UpdateIncidentRequest,
+  XrCvAssist,
+  XrIncidentActionUpdateRequest,
+  XrIncidentOverlayResponse,
+  XrOverlayStep,
+  XrTransitionGate,
   XrTriageHookRequest,
   XrTriageHookResponse,
 } from "@rescuesight/shared";
+import { createCvEvaluatorFromEnv, type CvEvaluator } from "./cvClient.js";
 import { InMemoryIncidentStore } from "./incidentStore.js";
 import {
   isValidAnswers,
   isValidPersistIncidentRequest,
   isValidUpdateIncidentRequest,
+  isValidXrIncidentActionUpdateRequest,
   isValidXrTriageHookRequest,
   persistIncidentPayloadShape,
   triagePayloadShape,
   updateIncidentPayloadShape,
+  xrIncidentActionUpdatePayloadShape,
   xrTriageHookPayloadShape,
 } from "./validation.js";
 import { evaluateTriage } from "./triageEngine.js";
@@ -23,11 +31,80 @@ import { buildXrIncidentOverlayResponse, buildXrOverlaySteps } from "./xrHooks.j
 
 interface BuildAppOptions {
   incidentStore?: InMemoryIncidentStore;
+  cvEvaluator?: CvEvaluator | null;
 }
 
 export const buildApp = (options: BuildAppOptions = {}) => {
   const app = express();
   const incidentStore = options.incidentStore ?? new InMemoryIncidentStore();
+  const cvEvaluator = options.cvEvaluator ?? createCvEvaluatorFromEnv();
+  const cvAssistByIncident = new Map<string, XrCvAssist>();
+  const blockedCheckpointIdsByIncident = new Map<string, string[]>();
+
+  const toCheckpointOverlaySteps = (cvAssist: XrCvAssist): XrOverlayStep[] =>
+    cvAssist.checkpoints
+      .filter((checkpoint) => !checkpoint.acknowledged)
+      .map((checkpoint) => ({
+        id: `checkpoint_${checkpoint.id}`,
+        text: `${checkpoint.prompt} ${checkpoint.suggestedAction}`.trim(),
+        source: "checkpoint",
+        priority: checkpoint.severity === "critical" ? "critical" : "high",
+        anchor: {
+          kind: "head_locked",
+          target: "helper_panel",
+        },
+        requiresConfirmation: true,
+      }));
+
+  const buildTransitionGate = (
+    urgency: "critical" | "high",
+    cvAssist?: XrCvAssist,
+  ): XrTransitionGate => {
+    if (!cvAssist) {
+      return {
+        blocked: false,
+        reason: "No CV confirmation checkpoints are active.",
+        requiredCheckpointIds: [],
+      };
+    }
+
+    const blockingIds = cvAssist.checkpoints
+      .filter(
+        (checkpoint) =>
+          !checkpoint.acknowledged &&
+          (checkpoint.severity === "critical" || checkpoint.severity === "high"),
+      )
+      .map((checkpoint) => checkpoint.id);
+
+    const blocked = urgency === "critical" && blockingIds.length > 0;
+    return {
+      blocked,
+      reason: blocked
+        ? "Critical progression is blocked until required confirmation checkpoints are acknowledged."
+        : "No blocking checkpoints remain for current urgency.",
+      requiredCheckpointIds: blockingIds,
+    };
+  };
+
+  const withXrContext = (
+    incidentId: string,
+    payload: Omit<XrIncidentOverlayResponse, "transitionGate">,
+  ): XrIncidentOverlayResponse => {
+    const cvAssist = cvAssistByIncident.get(incidentId);
+    const blockedIds = blockedCheckpointIdsByIncident.get(incidentId) ?? [];
+    return {
+      ...payload,
+      cvAssist,
+      transitionGate: {
+        blocked: blockedIds.length > 0,
+        reason:
+          blockedIds.length > 0
+            ? "Critical progression is blocked until required confirmation checkpoints are acknowledged."
+            : "No blocking checkpoints remain for current urgency.",
+        requiredCheckpointIds: blockedIds,
+      },
+    };
+  };
 
   app.use(cors());
   app.use(express.json());
@@ -70,7 +147,7 @@ export const buildApp = (options: BuildAppOptions = {}) => {
     res.json(payload);
   });
 
-  app.post("/api/xr/triage", (req: Request, res: Response) => {
+  app.post("/api/xr/triage", async (req: Request, res: Response) => {
     if (!isValidXrTriageHookRequest(req.body)) {
       res.status(400).json({
         error: "Invalid XR triage hook payload.",
@@ -97,12 +174,56 @@ export const buildApp = (options: BuildAppOptions = {}) => {
       return;
     }
 
+    let cvAssist = cvAssistByIncident.get(incident.id);
+    if (payload.cvSignal) {
+      if (!cvEvaluator) {
+        res.status(503).json({
+          error:
+            "CV service is not configured. Set RESCUESIGHT_CV_SERVICE_URL before submitting cvSignal.",
+        });
+        return;
+      }
+
+      try {
+        cvAssist = await cvEvaluator({
+          signal: payload.cvSignal,
+          acknowledgedCheckpoints: payload.acknowledgedCheckpoints ?? [],
+          source: payload.deviceContext?.deviceModel ?? "xr",
+        });
+        cvAssistByIncident.set(incident.id, cvAssist);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown CV service error";
+        res.status(502).json({ error: `CV service evaluation failed: ${message}` });
+        return;
+      }
+    }
+
+    const transitionGate = buildTransitionGate(incident.evaluation.result.urgency, cvAssist);
+    if (transitionGate.blocked) {
+      blockedCheckpointIdsByIncident.set(incident.id, transitionGate.requiredCheckpointIds);
+    } else {
+      blockedCheckpointIdsByIncident.delete(incident.id);
+    }
+
+    const baseOverlaySteps = buildXrOverlaySteps(incident.evaluation.result, incident.timeline);
+    const checkpointSteps = cvAssist ? toCheckpointOverlaySteps(cvAssist) : [];
+    const overlaySteps = [
+      ...checkpointSteps,
+      ...baseOverlaySteps.map((step) =>
+        transitionGate.blocked && step.priority === "critical"
+          ? { ...step, requiresConfirmation: true }
+          : step,
+      ),
+    ];
+
     const response: XrTriageHookResponse = {
       incidentId: incident.id,
       triage: incident.evaluation,
-      overlaySteps: buildXrOverlaySteps(incident.evaluation.result, incident.timeline),
+      overlaySteps,
       cprGuidance: incident.evaluation.result.cprGuidance,
       timeline: incident.timeline,
+      cvAssist,
+      transitionGate,
       safetyNotice: incident.evaluation.result.safetyNotice,
     };
 
@@ -117,7 +238,68 @@ export const buildApp = (options: BuildAppOptions = {}) => {
       return;
     }
 
-    res.json(buildXrIncidentOverlayResponse(incident));
+    const base = buildXrIncidentOverlayResponse(incident);
+    const cvAssist = cvAssistByIncident.get(incident.id);
+    const checkpointSteps = cvAssist ? toCheckpointOverlaySteps(cvAssist) : [];
+    const blockedIds = blockedCheckpointIdsByIncident.get(incident.id) ?? [];
+    const withGate: XrIncidentOverlayResponse = {
+      ...withXrContext(incident.id, base),
+      overlaySteps: [
+        ...checkpointSteps,
+        ...base.overlaySteps.map((step) =>
+          blockedIds.length > 0 && step.priority === "critical"
+            ? { ...step, requiresConfirmation: true }
+            : step,
+        ),
+      ],
+    };
+    res.json(withGate);
+  });
+
+  app.patch("/api/xr/incidents/:incidentId/actions", (req: Request, res: Response) => {
+    if (!isValidXrIncidentActionUpdateRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid XR incident action payload.",
+        expected: xrIncidentActionUpdatePayloadShape,
+      });
+      return;
+    }
+
+    const payload = req.body as XrIncidentActionUpdateRequest;
+    const blockedIds = blockedCheckpointIdsByIncident.get(req.params.incidentId) ?? [];
+    if (payload.actionKey === "cprStarted" && payload.completed && blockedIds.length > 0) {
+      res.status(409).json({
+        error:
+          "Critical action is blocked until required confirmation checkpoints are acknowledged.",
+        requiredCheckpointIds: blockedIds,
+      });
+      return;
+    }
+
+    const updated = incidentStore.updateIncident(req.params.incidentId, {
+      status: "open",
+      timeline: {
+        aedStatus: payload.aedStatus,
+        responderNotes: payload.responderNotes,
+        actionsTaken: {
+          [payload.actionKey]: payload.completed,
+        },
+      },
+    });
+
+    if (!updated) {
+      res.status(404).json({ error: "Incident not found." });
+      return;
+    }
+
+    const base = buildXrIncidentOverlayResponse(updated);
+    const cvAssist = cvAssistByIncident.get(updated.id);
+    const checkpointSteps = cvAssist ? toCheckpointOverlaySteps(cvAssist) : [];
+    const gatedResponse: XrIncidentOverlayResponse = {
+      ...withXrContext(updated.id, base),
+      overlaySteps: [...checkpointSteps, ...base.overlaySteps],
+    };
+    res.json(gatedResponse);
   });
 
   app.post("/api/incidents", (req: Request, res: Response) => {

@@ -10,6 +10,7 @@ This project is intentionally positioned as decision support, not diagnosis.
 - `apps/api`: Express + TypeScript triage decision engine API
 - `packages/shared`: shared domain types
 - `docs/unity`: Quest 3 Unity hook scripts and integration notes
+- `cv_model/prototype`: Python CV prototype and CV hook stub service
 
 ## Repository Layout
 
@@ -17,6 +18,7 @@ This project is intentionally positioned as decision support, not diagnosis.
 - `IMPLEMENTATION_README.md`: implementation plan + ongoing work log
 - `docs/ARCHITECTURE.md`: technical architecture and module boundaries
 - `docs/unity/QUEST3_UNITY_INTEGRATION.md`: Quest 3 + Unity hook setup
+- `cv_model/prototype/cv_service.py`: Python CV hint service (`/api/cv/evaluate`)
 - `apps/web`: frontend app
 - `apps/api`: backend app
 - `packages/shared`: shared interfaces and enums
@@ -42,6 +44,14 @@ npm run dev:web
 ```
 
 4. Open `http://localhost:5173`.
+
+Optional: enable CV-assisted XR checkpoint gating by running the Python CV service and setting:
+
+```bash
+export RESCUESIGHT_CV_SERVICE_URL="http://127.0.0.1:8091"
+```
+
+Then start API with `npm run dev:api` and submit `cvSignal` with XR triage payloads.
 
 ## Implemented Demo Features
 
@@ -80,11 +90,16 @@ npm run dev:web
 - `POST /api/triage/evaluate`
 - `POST /api/xr/triage`
 - `GET /api/xr/incidents/:incidentId/overlay`
+- `PATCH /api/xr/incidents/:incidentId/actions`
 - `POST /api/incidents`
 - `GET /api/incidents`
 - `GET /api/incidents/:incidentId`
 - `PATCH /api/incidents/:incidentId`
 - `GET /api/incidents/:incidentId/handoff`
+
+External CV stub service (Python):
+- `GET /health`
+- `POST /api/cv/evaluate`
 
 ## Testing
 

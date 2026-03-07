@@ -60,6 +60,17 @@ Direct run (inside activated venv):
 python run_webcam.py --print-json
 ```
 
+Run the lightweight CV hook HTTP service (for API/Quest integration tests):
+
+```bash
+python cv_service.py --host 127.0.0.1 --port 8091
+```
+
+Service endpoints:
+
+- `GET /health`
+- `POST /api/cv/evaluate`
+
 On first run, the script automatically downloads these pre-trained MediaPipe task models into `cv_model/prototype/models/`:
 
 - `pose_landmarker_lite.task`
@@ -75,13 +86,30 @@ Press `q` to quit.
 ## Quick tests
 
 ```bash
-python -m unittest test_cv_signals.py
+python -m unittest test_cv_signals.py test_cv_hooks.py
 ```
 
 Or through bootstrap script:
 
 ```bash
 ./bootstrap.sh --run-tests -- --print-json
+```
+
+Example `POST /api/cv/evaluate` body:
+
+```json
+{
+  "signal": {
+    "handPlacementStatus": "too_left",
+    "placementConfidence": 0.88,
+    "compressionRateBpm": 94,
+    "compressionRhythmQuality": "too_slow",
+    "visibility": "full",
+    "frameTimestampMs": 1731000000
+  },
+  "acknowledgedCheckpoints": [],
+  "source": "quest3"
+}
 ```
 
 ## Notes

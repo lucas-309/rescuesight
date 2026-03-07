@@ -32,6 +32,7 @@ Responsibilities:
 - Execute deterministic triage routing logic
 - Return pathway result with urgency and action steps
 - Map triage output to XR overlay steps for Unity/Quest clients
+- Fuse optional CV hint output and enforce confirmation gates before critical XR transitions
 - Persist incident timeline/handoff records in in-memory store
 - Expose incident retrieval and handoff payload endpoints
 
@@ -41,6 +42,7 @@ Current endpoints:
 - `POST /api/triage/evaluate`
 - `POST /api/xr/triage`
 - `GET /api/xr/incidents/:incidentId/overlay`
+- `PATCH /api/xr/incidents/:incidentId/actions`
 - `POST /api/incidents`
 - `GET /api/incidents`
 - `GET /api/incidents/:incidentId`
@@ -70,9 +72,11 @@ Responsibilities:
 1. Unity app collects confirmed triage answers.
 2. Unity posts to `POST /api/xr/triage` with optional `incidentId`.
 3. API creates or re-evaluates the incident and returns overlay-ready steps.
-4. Unity renders `overlaySteps` as head/world-locked instruction cards.
-5. Unity syncs action confirmations using `PATCH /api/incidents/:incidentId`.
-6. Unity can recover state after reconnect through `GET /api/xr/incidents/:incidentId/overlay`.
+4. Optional CV signal is sent to API (`cvSignal`) and evaluated through CV stub service.
+5. API returns `cvAssist` + `transitionGate`; critical progression is blocked until required checkpoints are acknowledged.
+6. Unity renders `overlaySteps` as head/world-locked instruction cards (including checkpoint prompts).
+7. Unity syncs action confirmations using `PATCH /api/xr/incidents/:incidentId/actions`.
+8. Unity can recover state after reconnect through `GET /api/xr/incidents/:incidentId/overlay`.
 
 ## Triage Rules (Current)
 
@@ -83,7 +87,7 @@ Responsibilities:
 
 ## Planned Extensions
 
-- CV service: person-down and hand-placement hints (user-confirmed)
+- CV service: Python stub implemented in `cv_model/prototype/cv_service.py` for person-down and hand-placement hints (user-confirmed) and consumed by API via `RESCUESIGHT_CV_SERVICE_URL`
 - XR overlay adapter: initial API hooks implemented, Unity rendering integration ongoing
 - RAG assistant: constrained retrieval of emergency instruction content
 - MCP tool layer: orchestrate demo tools and protocol retrieval

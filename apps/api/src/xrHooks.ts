@@ -135,5 +135,10 @@ export const buildXrIncidentOverlayResponse = (
   triage: incident.evaluation,
   overlaySteps: buildXrOverlaySteps(incident.evaluation.result, incident.timeline),
   timeline: incident.timeline,
+  transitionGate: {
+    blocked: false,
+    reason: "No blocking checkpoints remain for current urgency.",
+    requiredCheckpointIds: [],
+  },
   safetyNotice: incident.evaluation.result.safetyNotice,
 });

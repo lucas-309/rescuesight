@@ -4,6 +4,7 @@ import {
   isValidAnswers,
   isValidPersistIncidentRequest,
   isValidUpdateIncidentRequest,
+  isValidXrIncidentActionUpdateRequest,
   isValidXrTriageHookRequest,
 } from "./validation.js";
 
@@ -97,6 +98,15 @@ test("isValidXrTriageHookRequest accepts valid quest payload", () => {
         appVersion: "0.1.0",
         unityVersion: "6000.3.10f1",
       },
+      cvSignal: {
+        handPlacementStatus: "too_left",
+        placementConfidence: 0.88,
+        compressionRateBpm: 96,
+        compressionRhythmQuality: "too_slow",
+        visibility: "full",
+        frameTimestampMs: 1731000000,
+      },
+      acknowledgedCheckpoints: ["person_down_confirmed"],
     }),
     true,
   );
@@ -109,6 +119,45 @@ test("isValidXrTriageHookRequest rejects invalid device context values", () => {
       deviceContext: {
         deviceModel: "quest-pro",
       },
+    }),
+    false,
+  );
+});
+
+test("isValidXrTriageHookRequest rejects invalid cv signal payload", () => {
+  assert.equal(
+    isValidXrTriageHookRequest({
+      answers: validAnswers,
+      cvSignal: {
+        handPlacementStatus: "shift_left",
+        placementConfidence: "high",
+        compressionRateBpm: 96,
+        compressionRhythmQuality: "too_slow",
+        visibility: "full",
+        frameTimestampMs: 1731000000,
+      },
+    }),
+    false,
+  );
+});
+
+test("isValidXrIncidentActionUpdateRequest accepts valid action payload", () => {
+  assert.equal(
+    isValidXrIncidentActionUpdateRequest({
+      actionKey: "emsCalled",
+      completed: true,
+      aedStatus: "retrieval_in_progress",
+      responderNotes: "Caller dialed emergency services.",
+    }),
+    true,
+  );
+});
+
+test("isValidXrIncidentActionUpdateRequest rejects unknown action key", () => {
+  assert.equal(
+    isValidXrIncidentActionUpdateRequest({
+      actionKey: "startCompression",
+      completed: true,
     }),
     false,
   );

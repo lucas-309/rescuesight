@@ -1,5 +1,8 @@
 import type {
   AedStatus,
+  CvCompressionRhythmQuality,
+  CvHandPlacementStatus,
+  CvVisibility,
   IncidentActionKey,
   IncidentStatus,
   IncidentTimelineInput,
@@ -7,6 +10,7 @@ import type {
   TriageAnswers,
   UpdateIncidentRequest,
   XrDeviceContext,
+  XrIncidentActionUpdateRequest,
   XrTriageHookRequest,
 } from "@rescuesight/shared";
 
@@ -37,6 +41,22 @@ const XR_INTERACTION_MODE_VALUES: NonNullable<XrDeviceContext["interactionMode"]
   "hands",
   "mixed",
 ];
+const CV_HAND_PLACEMENT_VALUES: CvHandPlacementStatus[] = [
+  "correct",
+  "too_high",
+  "too_low",
+  "too_left",
+  "too_right",
+  "unknown",
+];
+const CV_RHYTHM_VALUES: CvCompressionRhythmQuality[] = [
+  "good",
+  "too_slow",
+  "too_fast",
+  "inconsistent",
+  "unknown",
+];
+const CV_VISIBILITY_VALUES: CvVisibility[] = ["full", "partial", "poor"];
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -76,6 +96,9 @@ const isValidIncidentSource = (
   value: unknown,
 ): value is NonNullable<PersistIncidentRequest["source"]> =>
   typeof value === "string" && INCIDENT_SOURCE_VALUES.includes(value as PersistIncidentRequest["source"]);
+
+const isValidIncidentActionKey = (value: unknown): value is IncidentActionKey =>
+  typeof value === "string" && INCIDENT_ACTION_KEYS.includes(value as IncidentActionKey);
 
 const isValidTimelineInput = (value: unknown): value is IncidentTimelineInput => {
   if (!isObject(value)) {
@@ -142,6 +165,49 @@ const isValidXrDeviceContext = (value: unknown): value is XrDeviceContext => {
   }
 
   if (value.unityVersion !== undefined && typeof value.unityVersion !== "string") {
+    return false;
+  }
+
+  return true;
+};
+
+const isValidXrCvSignal = (
+  value: unknown,
+): value is NonNullable<XrTriageHookRequest["cvSignal"]> => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (
+    typeof value.handPlacementStatus !== "string" ||
+    !CV_HAND_PLACEMENT_VALUES.includes(value.handPlacementStatus as CvHandPlacementStatus)
+  ) {
+    return false;
+  }
+
+  if (typeof value.placementConfidence !== "number") {
+    return false;
+  }
+
+  if (
+    typeof value.compressionRhythmQuality !== "string" ||
+    !CV_RHYTHM_VALUES.includes(value.compressionRhythmQuality as CvCompressionRhythmQuality)
+  ) {
+    return false;
+  }
+
+  if (
+    typeof value.visibility !== "string" ||
+    !CV_VISIBILITY_VALUES.includes(value.visibility as CvVisibility)
+  ) {
+    return false;
+  }
+
+  if (typeof value.compressionRateBpm !== "number") {
+    return false;
+  }
+
+  if (typeof value.frameTimestampMs !== "number") {
     return false;
   }
 
@@ -228,6 +294,46 @@ export const isValidXrTriageHookRequest = (
     return false;
   }
 
+  if (value.cvSignal !== undefined && !isValidXrCvSignal(value.cvSignal)) {
+    return false;
+  }
+
+  if (value.acknowledgedCheckpoints !== undefined) {
+    if (!Array.isArray(value.acknowledgedCheckpoints)) {
+      return false;
+    }
+
+    if (!value.acknowledgedCheckpoints.every((entry) => typeof entry === "string")) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+export const isValidXrIncidentActionUpdateRequest = (
+  value: unknown,
+): value is XrIncidentActionUpdateRequest => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (!isValidIncidentActionKey(value.actionKey)) {
+    return false;
+  }
+
+  if (!isBoolean(value.completed)) {
+    return false;
+  }
+
+  if (value.aedStatus !== undefined && !isValidAedStatus(value.aedStatus)) {
+    return false;
+  }
+
+  if (value.responderNotes !== undefined && typeof value.responderNotes !== "string") {
+    return false;
+  }
+
   return true;
 };
 
@@ -281,4 +387,20 @@ export const xrTriageHookPayloadShape = {
     appVersion: "string (optional)",
     unityVersion: "string (optional)",
   },
+  cvSignal: {
+    handPlacementStatus: "correct | too_high | too_low | too_left | too_right | unknown",
+    placementConfidence: "number",
+    compressionRateBpm: "number",
+    compressionRhythmQuality: "good | too_slow | too_fast | inconsistent | unknown",
+    visibility: "full | partial | poor",
+    frameTimestampMs: "number",
+  },
+  acknowledgedCheckpoints: ["string (optional)"],
+};
+
+export const xrIncidentActionUpdatePayloadShape = {
+  actionKey: "emsCalled | cprStarted | aedRequested | aedArrived | strokeOnsetRecorded",
+  completed: "boolean",
+  aedStatus: "unknown | not_available | retrieval_in_progress | on_scene (optional)",
+  responderNotes: "string (optional)",
 };

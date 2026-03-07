@@ -215,6 +215,64 @@ def draw_cpr_hand_target(
     )
 
 
+def draw_status_panel(frame: np.ndarray, lines: list[str]) -> None:
+    panel_x = 10
+    panel_y = 10
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.82
+    thickness = 2
+    line_gap = 8
+    pad_x = 14
+    pad_y = 10
+
+    text_sizes = [cv2.getTextSize(line, font, font_scale, thickness)[0] for line in lines]
+    max_width = max((size[0] for size in text_sizes), default=0)
+    line_height = max((size[1] for size in text_sizes), default=0)
+    panel_width = max_width + pad_x * 2
+    panel_height = len(lines) * line_height + (len(lines) - 1) * line_gap + pad_y * 2
+
+    overlay = frame.copy()
+    cv2.rectangle(
+        overlay,
+        (panel_x, panel_y),
+        (panel_x + panel_width, panel_y + panel_height),
+        (5, 5, 5),
+        -1,
+    )
+    cv2.addWeighted(overlay, 0.68, frame, 0.32, 0.0, frame)
+    cv2.rectangle(
+        frame,
+        (panel_x, panel_y),
+        (panel_x + panel_width, panel_y + panel_height),
+        (240, 240, 240),
+        2,
+    )
+
+    text_y = panel_y + pad_y + line_height
+    for line in lines:
+        cv2.putText(
+            frame,
+            line,
+            (panel_x + pad_x, text_y),
+            font,
+            font_scale,
+            (0, 0, 0),
+            5,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            line,
+            (panel_x + pad_x, text_y),
+            font,
+            font_scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
+        text_y += line_height + line_gap
+
+
 def main() -> int:
     args = parse_args()
 
@@ -301,26 +359,15 @@ def main() -> int:
                     cv2.LINE_AA,
                 )
 
-            y = 24
-            for line in [
+            status_lines = [
                 f"placement: {signal.handPlacementStatus} ({signal.placementConfidence:.2f})",
                 f"bpm: {signal.compressionRateBpm}",
                 f"rhythm: {signal.compressionRhythmQuality}",
                 f"visibility: {signal.visibility}",
                 f"target_lock: {'locked' if stabilized_target.isLocked else 'tracking'}",
                 "press 'q' to quit",
-            ]:
-                cv2.putText(
-                    frame,
-                    line,
-                    (10, y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
-                y += 24
+            ]
+            draw_status_panel(frame, status_lines)
 
             if args.print_json and signal.frameTimestampMs - last_json_print_ms >= 1_000:
                 print(json.dumps(signal.to_dict()))

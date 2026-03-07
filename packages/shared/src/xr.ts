@@ -34,7 +34,7 @@ export type XrOverlayStepPriority = "critical" | "high" | "info";
 export interface XrOverlayStep {
   id: string;
   text: string;
-  source: XrOverlayStepSource;
+  source: XrOverlayStepSource | "checkpoint";
   priority: XrOverlayStepPriority;
   anchor: XrOverlayAnchor;
   requiresConfirmation: boolean;
@@ -42,11 +42,74 @@ export interface XrOverlayStep {
   completed?: boolean;
 }
 
+export type CvHandPlacementStatus =
+  | "correct"
+  | "too_high"
+  | "too_low"
+  | "too_left"
+  | "too_right"
+  | "unknown";
+export type CvCompressionRhythmQuality =
+  | "good"
+  | "too_slow"
+  | "too_fast"
+  | "inconsistent"
+  | "unknown";
+export type CvVisibility = "full" | "partial" | "poor";
+
+export interface XrCvSignalInput {
+  handPlacementStatus: CvHandPlacementStatus;
+  placementConfidence: number;
+  compressionRateBpm: number;
+  compressionRhythmQuality: CvCompressionRhythmQuality;
+  visibility: CvVisibility;
+  frameTimestampMs: number;
+}
+
+export interface XrCvPersonDownHint {
+  status: "possible" | "unclear";
+  confidence: number;
+  message: string;
+}
+
+export interface XrCvSimpleHint {
+  directive?: string;
+  status?: string;
+  message: string;
+}
+
+export interface XrCvCheckpoint {
+  id: string;
+  prompt: string;
+  severity: "critical" | "high" | "advisory";
+  suggestedAction: string;
+  acknowledged: boolean;
+}
+
+export interface XrCvAssist {
+  personDownHint: XrCvPersonDownHint;
+  handPlacementHint: XrCvSimpleHint;
+  compressionHint: XrCvSimpleHint;
+  visibilityHint: XrCvSimpleHint;
+  checkpoints: XrCvCheckpoint[];
+  requiresUserConfirmation: boolean;
+  safetyNotice: string;
+  frameTimestampMs: number;
+}
+
+export interface XrTransitionGate {
+  blocked: boolean;
+  reason: string;
+  requiredCheckpointIds: string[];
+}
+
 export interface XrTriageHookRequest {
   answers: TriageAnswers;
   incidentId?: string;
   timeline?: IncidentTimelineInput;
   deviceContext?: XrDeviceContext;
+  cvSignal?: XrCvSignalInput;
+  acknowledgedCheckpoints?: string[];
 }
 
 export interface XrTriageHookResponse {
@@ -55,6 +118,8 @@ export interface XrTriageHookResponse {
   overlaySteps: XrOverlayStep[];
   cprGuidance?: CprGuidance;
   timeline: IncidentTimeline;
+  cvAssist?: XrCvAssist;
+  transitionGate: XrTransitionGate;
   safetyNotice: string;
 }
 
@@ -63,5 +128,14 @@ export interface XrIncidentOverlayResponse {
   triage: TriageEvaluationResponse;
   overlaySteps: XrOverlayStep[];
   timeline: IncidentTimeline;
+  cvAssist?: XrCvAssist;
+  transitionGate: XrTransitionGate;
   safetyNotice: string;
+}
+
+export interface XrIncidentActionUpdateRequest {
+  actionKey: IncidentActionKey;
+  completed: boolean;
+  aedStatus?: IncidentTimelineInput["aedStatus"];
+  responderNotes?: string;
 }

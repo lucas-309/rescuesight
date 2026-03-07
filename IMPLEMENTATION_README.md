@@ -69,8 +69,8 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
 ### Phase 4: XR/CV integration track
 - [x] Define initial XR overlay contract (anchor, instruction, priority, user-confirmed)
 - [x] Add XR hook endpoints for Unity/Quest clients
-- [ ] Stub CV detection service for person-down and hand-placement hints
-- [ ] Add explicit confirmation checkpoints before advancing critical steps
+- [x] Stub CV detection service for person-down and hand-placement hints
+- [x] Add explicit confirmation checkpoints in CV hook responses before critical guidance transitions
 
 ## Deliverables for This Work Session
 
@@ -135,6 +135,7 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
   - added API XR endpoints:
     - `POST /api/xr/triage`
     - `GET /api/xr/incidents/:incidentId/overlay`
+    - `PATCH /api/xr/incidents/:incidentId/actions`
   - added API-side overlay step mapper from deterministic triage output
   - added incident store support for re-evaluating an existing XR incident
   - added validation and integration tests for XR hook flows
@@ -142,6 +143,16 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
     - `docs/unity/RescueSightApiClient.cs`
     - `docs/unity/RescueSightQuest3HooksExample.cs`
   - documented Quest 3 Unity integration in `docs/unity/QUEST3_UNITY_INTEGRATION.md`
+  - implemented Python CV hook stub components:
+    - `cv_model/prototype/cv_hooks.py` for deterministic CV hint mapping
+    - `cv_model/prototype/cv_service.py` (`GET /health`, `POST /api/cv/evaluate`)
+    - `cv_model/prototype/test_cv_hooks.py` for hook + endpoint tests
+  - integrated CV stub output into API XR triage flow:
+    - `cvSignal` + `acknowledgedCheckpoints` accepted on `POST /api/xr/triage`
+    - `cvAssist` + `transitionGate` returned in XR responses
+    - critical action updates (`cprStarted`) blocked until required checkpoints are acknowledged
+  - added C# client scaffold for CV stub API:
+    - `docs/unity/RescueSightCvHooksClient.cs`
 
 ## Next Planned Steps (Immediate)
 
