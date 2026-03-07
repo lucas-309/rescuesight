@@ -24,7 +24,7 @@ interface RawCvCheckpoint {
 }
 
 interface RawCvHookResponse {
-  personDownHint: RawCvHint & { status: "possible" | "unclear"; confidence: number };
+  personDownHint: RawCvHint & { status: "likely" | "possible" | "unclear"; confidence: number };
   handPlacementHint: RawCvHint;
   compressionHint: RawCvHint;
   visibilityHint: RawCvHint;

@@ -3,6 +3,7 @@ import type {
   CreateDispatchRequest,
   CvLiveSignalIngestRequest,
   CreatePersonDownEventRequest,
+  CvBodyPosture,
   CvCompressionRhythmQuality,
   CvHandPlacementStatus,
   CvVisibility,
@@ -65,6 +66,7 @@ const CV_RHYTHM_VALUES: CvCompressionRhythmQuality[] = [
   "unknown",
 ];
 const CV_VISIBILITY_VALUES: CvVisibility[] = ["full", "partial", "poor"];
+const CV_BODY_POSTURE_VALUES: CvBodyPosture[] = ["lying", "sitting", "upright", "unknown"];
 const PERSON_DOWN_SIGNAL_STATUS_VALUES: PersonDownSignal["status"][] = [
   "person_down",
   "not_person_down",
@@ -248,6 +250,27 @@ export const isValidXrCvSignal = (
   }
 
   if (typeof value.frameTimestampMs !== "number") {
+    return false;
+  }
+
+  if (value.bodyPosture !== undefined) {
+    if (
+      typeof value.bodyPosture !== "string" ||
+      !CV_BODY_POSTURE_VALUES.includes(value.bodyPosture as CvBodyPosture)
+    ) {
+      return false;
+    }
+  }
+
+  if (value.postureConfidence !== undefined && !isFiniteNumber(value.postureConfidence)) {
+    return false;
+  }
+
+  if (value.eyesClosedConfidence !== undefined && !isFiniteNumber(value.eyesClosedConfidence)) {
+    return false;
+  }
+
+  if (value.torsoInclineDeg !== undefined && !isFiniteNumber(value.torsoInclineDeg)) {
     return false;
   }
 
@@ -648,6 +671,10 @@ export const xrTriageHookPayloadShape = {
     compressionRhythmQuality: "good | too_slow | too_fast | inconsistent | unknown",
     visibility: "full | partial | poor",
     frameTimestampMs: "number",
+    bodyPosture: "lying | sitting | upright | unknown (optional)",
+    postureConfidence: "number (optional)",
+    eyesClosedConfidence: "number (optional)",
+    torsoInclineDeg: "number (optional)",
   },
   acknowledgedCheckpoints: ["string (optional)"],
 };

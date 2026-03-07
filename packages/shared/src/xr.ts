@@ -56,6 +56,7 @@ export type CvCompressionRhythmQuality =
   | "inconsistent"
   | "unknown";
 export type CvVisibility = "full" | "partial" | "poor";
+export type CvBodyPosture = "lying" | "sitting" | "upright" | "unknown";
 
 export interface XrCvSignalInput {
   handPlacementStatus: CvHandPlacementStatus;
@@ -64,10 +65,14 @@ export interface XrCvSignalInput {
   compressionRhythmQuality: CvCompressionRhythmQuality;
   visibility: CvVisibility;
   frameTimestampMs: number;
+  bodyPosture?: CvBodyPosture;
+  postureConfidence?: number;
+  eyesClosedConfidence?: number;
+  torsoInclineDeg?: number;
 }
 
 export interface XrCvPersonDownHint {
-  status: "possible" | "unclear";
+  status: "likely" | "possible" | "unclear";
   confidence: number;
   message: string;
 }

@@ -109,6 +109,10 @@ test("isValidXrTriageHookRequest accepts valid quest payload", () => {
         compressionRhythmQuality: "too_slow",
         visibility: "full",
         frameTimestampMs: 1731000000,
+        bodyPosture: "lying",
+        postureConfidence: 0.81,
+        eyesClosedConfidence: 0.62,
+        torsoInclineDeg: 22,
       },
       acknowledgedCheckpoints: ["person_down_confirmed"],
     }),
@@ -139,6 +143,24 @@ test("isValidXrTriageHookRequest rejects invalid cv signal payload", () => {
         compressionRhythmQuality: "too_slow",
         visibility: "full",
         frameTimestampMs: 1731000000,
+      },
+    }),
+    false,
+  );
+});
+
+test("isValidXrTriageHookRequest rejects invalid cv posture metadata", () => {
+  assert.equal(
+    isValidXrTriageHookRequest({
+      answers: validAnswers,
+      cvSignal: {
+        handPlacementStatus: "correct",
+        placementConfidence: 0.9,
+        compressionRateBpm: 100,
+        compressionRhythmQuality: "good",
+        visibility: "full",
+        frameTimestampMs: 1731000100,
+        bodyPosture: "kneeling",
       },
     }),
     false,

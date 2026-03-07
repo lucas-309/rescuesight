@@ -18,6 +18,10 @@ def _sample_signal(**overrides: object) -> dict[str, object]:
         "compressionRhythmQuality": "good",
         "visibility": "full",
         "frameTimestampMs": 123456,
+        "bodyPosture": "lying",
+        "postureConfidence": 0.82,
+        "eyesClosedConfidence": 0.66,
+        "torsoInclineDeg": 18.0,
     }
     signal.update(overrides)
     return signal
@@ -60,7 +64,7 @@ class TestCvHooks(unittest.TestCase):
         first = evaluate_cv_hook(
             parse_cv_hook_request({"signal": _sample_signal()})
         )
-        self.assertEqual(first.personDownHint.status, "possible")
+        self.assertIn(first.personDownHint.status, {"likely", "possible"})
         self.assertTrue(first.requiresUserConfirmation)
         self.assertIn(
             "person_down_confirmed",

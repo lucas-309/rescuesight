@@ -59,33 +59,55 @@ const inferPersonDownSignalFromLiveCv = (
 ): PersonDownSignal => {
   let confidence = 0;
 
+  const posture = signal.bodyPosture ?? "unknown";
+  const postureConfidence = clamp(signal.postureConfidence ?? 0, 0, 1);
+  const eyesClosedConfidence = clamp(signal.eyesClosedConfidence ?? 0, 0, 1);
+
+  if (posture === "lying") {
+    confidence += 0.12 + 0.34 * postureConfidence;
+  } else if (posture === "sitting") {
+    confidence -= 0.32 * Math.max(0.3, postureConfidence);
+  } else if (posture === "upright") {
+    confidence -= 0.45 * Math.max(0.3, postureConfidence);
+  }
+
+  if (eyesClosedConfidence >= 0.25) {
+    confidence += 0.18 * eyesClosedConfidence;
+  }
+
   if (signal.visibility === "full") {
-    confidence += 0.35;
+    confidence += 0.12;
   } else if (signal.visibility === "partial") {
-    confidence += 0.2;
+    confidence += 0.06;
   }
 
   if (signal.handPlacementStatus !== "unknown") {
-    confidence += 0.25 * clamp(signal.placementConfidence, 0, 1);
+    confidence += 0.1 * clamp(signal.placementConfidence, 0, 1);
   }
 
-  if (signal.compressionRateBpm >= 70) {
-    confidence += 0.25;
+  if (signal.compressionRateBpm >= 85) {
+    confidence += 0.12;
   }
 
   if (signal.compressionRhythmQuality !== "unknown") {
-    confidence += 0.15;
+    confidence += 0.06;
   }
 
   if (signal.visibility === "poor") {
-    confidence = Math.min(confidence, 0.32);
+    confidence = Math.min(confidence, 0.3);
   }
 
-  const raw = clamp(confidence, 0, 1);
-  // Lift the mid-range so person-down scoring is less likely to plateau around ~0.6.
-  const bounded = clamp((raw - 0.12) / 0.72, 0, 1);
+  if (
+    (posture === "upright" || posture === "sitting") &&
+    postureConfidence >= 0.55 &&
+    eyesClosedConfidence < 0.65
+  ) {
+    confidence = Math.min(confidence, 0.35);
+  }
+
+  const bounded = clamp(confidence, 0, 1);
   const status: PersonDownSignal["status"] =
-    bounded >= 0.45 ? "person_down" : bounded <= 0.25 ? "not_person_down" : "uncertain";
+    bounded >= 0.6 ? "person_down" : bounded >= 0.4 ? "uncertain" : "not_person_down";
 
   return {
     status,
@@ -99,13 +121,24 @@ const inferPersonDownSignalFromLiveCv = (
 const buildLiveSummaryText = (
   signal: CvLiveSignalIngestRequest["signal"],
   personDownSignal: PersonDownSignal,
-): string =>
-  [
-    `Person-down: ${personDownSignal.status} (${personDownSignal.confidence.toFixed(2)})`,
+): string => {
+  const likelihoodLabel =
+    personDownSignal.confidence >= 0.6
+      ? "likely"
+      : personDownSignal.confidence >= 0.4
+      ? "possible"
+      : "unlikely";
+  const postureLabel = signal.bodyPosture ?? "unknown";
+
+  return [
+    `Person-down: ${likelihoodLabel} (${personDownSignal.confidence.toFixed(2)})`,
+    `Posture: ${postureLabel} (${(signal.postureConfidence ?? 0).toFixed(2)})`,
+    `Eyes-closed: ${(signal.eyesClosedConfidence ?? 0).toFixed(2)}`,
     `Placement: ${signal.handPlacementStatus} (${signal.placementConfidence.toFixed(2)})`,
     `Compression: ${signal.compressionRateBpm} BPM (${signal.compressionRhythmQuality})`,
     `Visibility: ${signal.visibility}`,
   ].join(" | ");
+};
 
 export const buildApp = (options: BuildAppOptions = {}) => {
   const app = express();

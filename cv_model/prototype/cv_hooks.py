@@ -13,6 +13,10 @@ CV_HOOK_REQUEST_PAYLOAD_SHAPE: dict[str, object] = {
         "compressionRhythmQuality": "good | too_slow | too_fast | inconsistent | unknown",
         "visibility": "full | partial | poor",
         "frameTimestampMs": "integer",
+        "bodyPosture": "lying | sitting | upright | unknown (optional)",
+        "postureConfidence": "number (optional)",
+        "eyesClosedConfidence": "number (optional)",
+        "torsoInclineDeg": "number (optional)",
     },
     "acknowledgedCheckpoints": ["string (optional)"],
     "source": "string (optional)",
@@ -29,6 +33,7 @@ HAND_STATUS_VALUES = {
 
 RHYTHM_VALUES = {"good", "too_slow", "too_fast", "inconsistent", "unknown"}
 VISIBILITY_VALUES = {"full", "partial", "poor"}
+POSTURE_VALUES = {"lying", "sitting", "upright", "unknown"}
 
 
 @dataclass(frozen=True)
@@ -128,7 +133,7 @@ def evaluate_cv_hook(request: CvHookRequest) -> CvHookResponse:
     acknowledged = set(request.acknowledgedCheckpoints)
 
     if (
-        person_down_hint.status == "possible"
+        person_down_hint.status in {"possible", "likely"}
         and "person_down_confirmed" not in acknowledged
     ):
         checkpoints.append(
@@ -203,6 +208,22 @@ def _parse_cv_signal(payload: dict[str, object]) -> CVSignal:
     if not isinstance(ts, int):
         raise ValueError("signal.frameTimestampMs must be an integer.")
 
+    posture = payload.get("bodyPosture", "unknown")
+    if not isinstance(posture, str) or posture not in POSTURE_VALUES:
+        raise ValueError("signal.bodyPosture is invalid.")
+
+    posture_conf = payload.get("postureConfidence", 0.0)
+    if not isinstance(posture_conf, (float, int)):
+        raise ValueError("signal.postureConfidence must be a number.")
+
+    eyes_closed_conf = payload.get("eyesClosedConfidence", 0.0)
+    if not isinstance(eyes_closed_conf, (float, int)):
+        raise ValueError("signal.eyesClosedConfidence must be a number.")
+
+    torso_incline_deg = payload.get("torsoInclineDeg", 0.0)
+    if not isinstance(torso_incline_deg, (float, int)):
+        raise ValueError("signal.torsoInclineDeg must be a number.")
+
     return CVSignal(
         handPlacementStatus=hand_status,
         placementConfidence=float(_clamp(float(placement_conf), 0.0, 1.0)),
@@ -210,6 +231,10 @@ def _parse_cv_signal(payload: dict[str, object]) -> CVSignal:
         compressionRhythmQuality=rhythm,
         visibility=visibility,
         frameTimestampMs=ts,
+        bodyPosture=posture,
+        postureConfidence=float(_clamp(float(posture_conf), 0.0, 1.0)),
+        eyesClosedConfidence=float(_clamp(float(eyes_closed_conf), 0.0, 1.0)),
+        torsoInclineDeg=float(_clamp(float(torso_incline_deg), 0.0, 90.0)),
     )
 
 
@@ -217,32 +242,58 @@ def _infer_person_down_hint(signal: CVSignal) -> PersonDownHint:
     confidence = 0.0
     rationale: list[str] = []
 
+    if signal.bodyPosture == "lying":
+        confidence += 0.12 + 0.34 * signal.postureConfidence
+        rationale.append(f"lying posture ({signal.postureConfidence:.2f})")
+    elif signal.bodyPosture == "sitting":
+        confidence -= 0.32 * max(0.3, signal.postureConfidence)
+        rationale.append(f"sitting posture ({signal.postureConfidence:.2f})")
+    elif signal.bodyPosture == "upright":
+        confidence -= 0.45 * max(0.3, signal.postureConfidence)
+        rationale.append(f"upright posture ({signal.postureConfidence:.2f})")
+    else:
+        rationale.append("posture unknown")
+
+    if signal.eyesClosedConfidence >= 0.25:
+        confidence += 0.18 * signal.eyesClosedConfidence
+        rationale.append(f"eyes-closed signal ({signal.eyesClosedConfidence:.2f})")
+
     if signal.visibility == "full":
-        confidence += 0.35
+        confidence += 0.12
         rationale.append("full torso visibility")
     elif signal.visibility == "partial":
-        confidence += 0.20
+        confidence += 0.06
         rationale.append("partial torso visibility")
 
     if signal.handPlacementStatus != "unknown":
-        confidence += 0.25 * signal.placementConfidence
+        confidence += 0.10 * signal.placementConfidence
         rationale.append("hand placement tracked")
 
-    if signal.compressionRateBpm >= 70:
-        confidence += 0.25
+    if signal.compressionRateBpm >= 85:
+        confidence += 0.12
         rationale.append("compression-like motion present")
 
     if signal.compressionRhythmQuality in {"good", "too_slow", "too_fast", "inconsistent"}:
-        confidence += 0.15
+        confidence += 0.06
         rationale.append("rhythm classification available")
 
     if signal.visibility == "poor":
-        confidence = min(confidence, 0.32)
+        confidence = min(confidence, 0.30)
 
-    raw_confidence = float(_clamp(confidence, 0.0, 1.0))
-    # Rescale upward so mid-band detections are less likely to stall around ~0.6.
-    confidence = float(_clamp((raw_confidence - 0.15) / 0.70, 0.0, 1.0))
-    if confidence >= 0.45:
+    # Guardrails to reduce false positives for sitting/standing people.
+    if (
+        signal.bodyPosture in {"upright", "sitting"}
+        and signal.postureConfidence >= 0.55
+        and signal.eyesClosedConfidence < 0.65
+    ):
+        confidence = min(confidence, 0.35)
+        rationale.append("upright/sitting suppression applied")
+
+    confidence = float(_clamp(confidence, 0.0, 1.0))
+    if confidence >= 0.60:
+        message = "CV indicates a likely person-down context. Confirm and proceed with emergency workflow."
+        status = "likely"
+    elif confidence >= 0.40:
         message = "CV indicates a possible person-down context. Confirm with bystander checklist."
         status = "possible"
     else:

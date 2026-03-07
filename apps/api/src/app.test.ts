@@ -126,6 +126,10 @@ describe("RescueSight API routes", () => {
           compressionRhythmQuality: "good",
           visibility: "full",
           frameTimestampMs: 1731001200,
+          bodyPosture: "lying",
+          postureConfidence: 0.84,
+          eyesClosedConfidence: 0.63,
+          torsoInclineDeg: 20.0,
         },
         sourceDeviceId: "cam-quest-01",
         location: {
