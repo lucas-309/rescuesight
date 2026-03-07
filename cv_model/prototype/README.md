@@ -16,6 +16,12 @@ This is the Day 1 hackathon scaffold for CV signals using pre-trained MediaPipe 
 
 ```bash
 cd cv_model/prototype
+./bootstrap.sh
+```
+
+Equivalent manual setup:
+
+```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -43,6 +49,12 @@ Press `q` to quit.
 
 ```bash
 python -m unittest test_cv_signals.py
+```
+
+Or through bootstrap script:
+
+```bash
+./bootstrap.sh --skip-install
 ```
 
 ## Notes
