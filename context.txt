@@ -1,0 +1,1118 @@
+Shared contracts both people must use exactly
+These are the things that must have the same names on both sides.
+1. State names
+Use these exact state names:
+SESSION_START
+
+
+RESPONSIVENESS_CHECK
+
+
+BREATHING_CHECK
+
+
+CPR_INSTRUCTIONS
+
+
+CPR_ACTIVE
+
+
+REASSESSMENT
+
+
+WAIT_FOR_EMS
+
+
+SESSION_END
+
+
+
+2. Event type names
+Use these exact event names:
+SESSION_STARTED
+
+
+STATE_CHANGED
+
+
+USER_RESPONSE_RECORDED
+
+
+CPR_STARTED
+
+
+CPR_STOPPED
+
+
+PATIENT_BREATHING_DETECTED
+
+
+XR_SIGNAL_RECEIVED
+
+
+RHYTHM_FEEDBACK_GENERATED
+
+
+ERROR_OCCURRED
+
+
+INCIDENT_SUMMARY_GENERATED
+
+
+
+3. Tool names
+Use these exact tool names:
+get_location
+
+
+log_event
+
+
+update_incident_status
+
+
+record_user_response
+
+
+generate_incident_summary
+
+
+
+4. XR signal types
+Use these exact XR signal types:
+hand_position
+
+
+compression_rhythm
+
+
+And these exact values where relevant:
+For hand_position.status:
+correct
+
+
+incorrect
+
+
+not_detected
+
+
+For rhythm feedback status:
+slow
+
+
+good
+
+
+fast
+
+
+
+5. Incident object field names
+Use these exact field names:
+incident_id
+
+
+start_time
+
+
+location
+
+
+current_state
+
+
+responsiveness_status
+
+
+breathing_status
+
+
+cpr_active
+
+
+cpr_started_time
+
+
+rhythm_status
+
+
+hand_position_status
+
+
+transcript
+
+
+timeline
+
+
+incident_summary
+
+
+
+6. Transcript entry format
+Use these exact field names for each transcript message:
+speaker
+
+
+message
+
+
+timestamp
+
+
+Allowed speaker values:
+agent
+
+
+user
+
+
+
+7. Timeline event format
+Use these exact field names for each event:
+event_type
+
+
+timestamp
+
+
+data
+
+
+
+Person 1: Agent Brain / Conversation / CPR Logic
+Person 1 builds what the AI says, how it decides things, and how it reacts.
+1. Define agent scope and behavior
+Person 1 should:
+define that the agent only handles suspected cardiac arrest
+
+
+define what the agent is allowed to do:
+
+
+ask assessment questions
+
+
+guide CPR
+
+
+react to XR feedback
+
+
+answer CPR-related questions
+
+
+define what the agent is not allowed to do:
+
+
+diagnose medical conditions
+
+
+give medication advice
+
+
+go outside CPR scope
+
+
+define the tone:
+
+
+calm
+
+
+short
+
+
+direct
+
+
+
+2. Build the state machine logic
+Person 1 should:
+use the shared state names exactly:
+
+
+SESSION_START
+
+
+RESPONSIVENESS_CHECK
+
+
+BREATHING_CHECK
+
+
+CPR_INSTRUCTIONS
+
+
+CPR_ACTIVE
+
+
+REASSESSMENT
+
+
+WAIT_FOR_EMS
+
+
+SESSION_END
+
+
+define the rules for moving between states
+
+
+decide when CPR starts
+
+
+decide when CPR stops
+
+
+hardcode critical transitions so the AI does not improvise
+
+
+Example:
+if person is unresponsive and not breathing normally → move to CPR_INSTRUCTIONS
+
+
+when CPR begins → move to CPR_ACTIVE
+
+
+if breathing resumes → move to WAIT_FOR_EMS
+
+
+
+3. Build the intake question flow
+Person 1 should:
+write the exact first lines the agent says
+
+
+write the exact questions in order
+
+
+keep the flow short and action-oriented
+
+
+make sure the agent asks one question at a time
+
+
+handle answers like:
+
+
+yes
+
+
+no
+
+
+not sure
+
+
+define follow-up wording for unclear responses
+
+
+decide what the agent says after each answer
+
+
+Typical questions:
+“Is the person awake or responding?”
+
+
+“Are they breathing normally?”
+
+
+
+4. Build the condition evaluation logic
+Person 1 should:
+read responsiveness_status
+
+
+read breathing_status
+
+
+decide whether the agent should:
+
+
+start CPR
+
+
+continue checking
+
+
+move to monitoring
+
+
+safely handle uncertain answers
+
+
+make sure the agent never gets stuck
+
+
+This is the logic layer that turns answers into action.
+
+5. Build the CPR instruction engine
+Person 1 should:
+write the CPR instruction sequence
+
+
+split it into small spoken steps
+
+
+define what the agent says in CPR_INSTRUCTIONS
+
+
+define what the agent says in CPR_ACTIVE
+
+
+Examples of content:
+where to place hands
+
+
+how to position arms
+
+
+push hard and fast
+
+
+follow the rhythm
+
+
+keep going
+
+
+
+6. Build the XR reaction logic
+Person 1 should:
+decide how the agent reacts to XR signals
+
+
+use the exact shared XR signal names:
+
+
+hand_position
+
+
+compression_rhythm
+
+
+use the exact shared values:
+
+
+correct
+
+
+incorrect
+
+
+not_detected
+
+
+slow
+
+
+good
+
+
+fast
+
+
+Mapping examples:
+if hand_position.status = incorrect → tell user to reposition hands
+
+
+if rhythm status = slow → tell user to go faster
+
+
+if rhythm status = fast → tell user to slow down
+
+
+if rhythm status = good → encourage user to continue
+
+
+
+7. Build the CPR coaching loop
+Person 1 should:
+make the agent continue coaching while current_state = CPR_ACTIVE
+
+
+decide how often the agent speaks
+
+
+avoid speaking too much
+
+
+define encouragement phrases
+
+
+define correction phrases
+
+
+allow the loop to react to live XR feedback
+
+
+allow the loop to stop if condition changes
+
+
+
+8. Build the reassessment logic
+Person 1 should:
+define when to move to REASSESSMENT
+
+
+write the reassessment prompts
+
+
+decide what happens if the person starts breathing again
+
+
+decide what happens if nothing changes
+
+
+move to WAIT_FOR_EMS when appropriate
+
+
+
+9. Build the RAG answer behavior
+Person 1 should:
+decide when the agent should answer a CPR question
+
+
+decide when it should ignore extra questions and keep focusing on CPR
+
+
+make retrieval answers short and useful
+
+
+keep the scope narrow
+
+
+Examples of allowed questions:
+where to put hands
+
+
+what if they are gasping
+
+
+when to stop
+
+
+
+10. Build the system prompt and safety behavior
+Person 1 should:
+write the system prompt
+
+
+force the model to stay in scope
+
+
+force concise responses
+
+
+force action-first behavior
+
+
+prevent diagnosis claims
+
+
+prevent unsafe medical advice
+
+
+define what the model says if asked something outside scope
+
+
+
+11. Connect to shared tools
+Person 1 should call these exact tool names when needed:
+get_location
+
+
+log_event
+
+
+update_incident_status
+
+
+record_user_response
+
+
+generate_incident_summary
+
+
+Person 1 should not rename them.
+
+12. Person 1 deliverables
+Person 1 should produce:
+conversation flow
+
+
+state transition logic
+
+
+CPR scripts
+
+
+reassessment scripts
+
+
+XR signal reaction rules
+
+
+system prompt
+
+
+agent orchestration code
+
+
+
+Person 2: Backend / Tools / Storage / Logging
+Person 2 builds what runs behind the scenes.
+1. Build session initialization
+Person 2 should:
+create the function that starts a session
+
+
+generate incident_id
+
+
+set start_time
+
+
+initialize current_state = SESSION_START
+
+
+create the incident object using the exact shared field names
+
+
+initialize empty timeline
+
+
+initialize empty transcript
+
+
+
+2. Build the incident object schema
+Person 2 should create and maintain this exact structure:
+incident_id
+
+
+start_time
+
+
+location
+
+
+current_state
+
+
+responsiveness_status
+
+
+breathing_status
+
+
+cpr_active
+
+
+cpr_started_time
+
+
+rhythm_status
+
+
+hand_position_status
+
+
+transcript
+
+
+timeline
+
+
+incident_summary
+
+
+Person 2 should make sure Person 1 can read and update this structure.
+
+3. Build the event logger
+Person 2 should:
+create the log_event tool
+
+
+log every important action using the exact shared event names:
+
+
+SESSION_STARTED
+
+
+STATE_CHANGED
+
+
+USER_RESPONSE_RECORDED
+
+
+CPR_STARTED
+
+
+CPR_STOPPED
+
+
+PATIENT_BREATHING_DETECTED
+
+
+XR_SIGNAL_RECEIVED
+
+
+RHYTHM_FEEDBACK_GENERATED
+
+
+ERROR_OCCURRED
+
+
+INCIDENT_SUMMARY_GENERATED
+
+
+store each event with exact fields:
+
+
+event_type
+
+
+timestamp
+
+
+data
+
+
+
+4. Build transcript logging
+Person 2 should:
+store every agent message
+
+
+store every user message
+
+
+use the exact transcript format:
+
+
+speaker
+
+
+message
+
+
+timestamp
+
+
+enforce allowed speaker values:
+
+
+agent
+
+
+user
+
+
+
+5. Build the shared tools
+Person 2 should implement these exact tools:
+get_location
+returns location
+
+
+stores location in location
+
+
+log_event
+appends event to timeline
+
+
+update_incident_status
+updates one or more fields in the incident object
+
+
+record_user_response
+stores user answer in incident object
+
+
+appends corresponding transcript entry
+
+
+logs USER_RESPONSE_RECORDED
+
+
+generate_incident_summary
+builds summary text or structured summary
+
+
+stores result in incident_summary
+
+
+logs INCIDENT_SUMMARY_GENERATED
+
+
+
+6. Build XR signal ingestion
+Person 2 should:
+create a way to receive XR data
+
+
+accept the exact shared XR signal types:
+
+
+hand_position
+
+
+compression_rhythm
+
+
+accept the exact values:
+
+
+for hand position: correct, incorrect, not_detected
+
+
+for rhythm status: slow, good, fast
+
+
+update:
+
+
+hand_position_status
+
+
+rhythm_status
+
+
+log XR_SIGNAL_RECEIVED
+
+
+Example:
+ if XR sends hand position correct, backend stores:
+hand_position_status = correct
+
+
+
+7. Build storage / session manager
+Person 2 should:
+choose simple storage
+
+
+create session create/read/update functions
+
+
+store the current incident object
+
+
+store timeline
+
+
+store transcript
+
+
+support continuous updates during the session
+
+
+
+8. Build the RAG backend
+Person 2 should:
+collect CPR-only documents
+
+
+chunk them
+
+
+embed them
+
+
+store them in a vector store
+
+
+create a retrieval function the agent can use
+
+
+keep the knowledge narrow and safe
+
+
+Person 2 builds the backend part, Person 1 decides when and how to use it.
+
+9. Build voice plumbing if needed
+Person 2 should:
+integrate speech-to-text
+
+
+integrate text-to-speech
+
+
+expose simple functions for Person 1 to use
+
+
+handle provider errors
+
+
+keep latency low
+
+
+
+10. Build failure handling
+Person 2 should:
+catch backend errors
+
+
+catch XR signal errors
+
+
+catch storage errors
+
+
+catch retrieval errors
+
+
+log all failures with ERROR_OCCURRED
+
+
+return clean error messages so Person 1’s logic can keep going
+
+
+
+11. Build incident summary generation
+Person 2 should:
+generate summary from the session data
+
+
+include:
+
+
+location
+
+
+latest patient condition
+
+
+current state
+
+
+whether CPR is active
+
+
+important timeline events
+
+
+store it in incident_summary
+
+
+
+12. Person 2 deliverables
+Person 2 should produce:
+incident schema
+
+
+session manager
+
+
+event logger
+
+
+transcript logger
+
+
+shared tools
+
+
+XR signal endpoint
+
+
+storage layer
+
+
+RAG backend
+
+
+voice backend if needed
+
+
+summary generator
+
+
+
+Things Person 1 and Person 2 must agree on before coding
+Use these exact names and formats.
+A. Exact state names
+SESSION_START
+
+
+RESPONSIVENESS_CHECK
+
+
+BREATHING_CHECK
+
+
+CPR_INSTRUCTIONS
+
+
+CPR_ACTIVE
+
+
+REASSESSMENT
+
+
+WAIT_FOR_EMS
+
+
+SESSION_END
+
+
+B. Exact event names
+SESSION_STARTED
+
+
+STATE_CHANGED
+
+
+USER_RESPONSE_RECORDED
+
+
+CPR_STARTED
+
+
+CPR_STOPPED
+
+
+PATIENT_BREATHING_DETECTED
+
+
+XR_SIGNAL_RECEIVED
+
+
+RHYTHM_FEEDBACK_GENERATED
+
+
+ERROR_OCCURRED
+
+
+INCIDENT_SUMMARY_GENERATED
+
+
+C. Exact tool names
+get_location
+
+
+log_event
+
+
+update_incident_status
+
+
+record_user_response
+
+
+generate_incident_summary
+
+
+D. Exact incident fields
+incident_id
+
+
+start_time
+
+
+location
+
+
+current_state
+
+
+responsiveness_status
+
+
+breathing_status
+
+
+cpr_active
+
+
+cpr_started_time
+
+
+rhythm_status
+
+
+hand_position_status
+
+
+transcript
+
+
+timeline
+
+
+incident_summary
+
+
+E. Exact transcript fields
+speaker
+
+
+message
+
+
+timestamp
+
+
+F. Exact event fields
+event_type
+
+
+timestamp
+
+
+data
+
+
+G. Exact XR signal types
+hand_position
+
+
+compression_rhythm
+
+
+H. Exact XR signal values
+For hand position:
+correct
+
+
+incorrect
+
+
+not_detected
+
+
+For rhythm status:
+slow
+
+
+good
+
+
+fast
+
+
+
+Super simple summary
+Person 1 does:
+the AI conversation
+
+
+the decision logic
+
+
+the CPR instructions
+the reaction to user answers
+the reaction to XR feedback
+Person 2 does:
+the backend
+the tools
+the data storage
+the logging
+the XR input pipeline
+
+the RAG backend
+
