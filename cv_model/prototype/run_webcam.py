@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+from datetime import datetime, timezone
 from math import cos, radians, sin
 from pathlib import Path
 from typing import Optional
@@ -534,6 +536,41 @@ def build_person_down_signal_payload(cv_status: str, cv_confidence: float, times
     }
 
 
+def build_victim_snapshot_payload(
+    frame_bgr: np.ndarray,
+    timestamp_ms: int,
+    lying_confidence: float,
+    eyes_closed_confidence: float,
+) -> Optional[dict[str, object]]:
+    frame_h, frame_w = frame_bgr.shape[:2]
+    resized = frame_bgr
+    if frame_w > 960:
+        target_w = 960
+        target_h = max(1, int(frame_h * (target_w / frame_w)))
+        resized = cv2.resize(frame_bgr, (target_w, target_h), interpolation=cv2.INTER_AREA)
+
+    ok, encoded = cv2.imencode(
+        ".jpg",
+        resized,
+        [int(cv2.IMWRITE_JPEG_QUALITY), 84],
+    )
+    if not ok:
+        return None
+
+    encoded_b64 = base64.b64encode(encoded.tobytes()).decode("ascii")
+    image_data_url = f"data:image/jpeg;base64,{encoded_b64}"
+
+    return {
+        "imageDataUrl": image_data_url,
+        "capturedAtIso": datetime.now(timezone.utc).isoformat(),
+        "frameTimestampMs": int(timestamp_ms),
+        "triggerReason": (
+            "lying>0.60 && eyesClosed>0.80 "
+            f"(lying={lying_confidence:.2f}, eyesClosed={eyes_closed_confidence:.2f})"
+        ),
+    }
+
+
 def post_live_signal(url: str, payload: dict[str, object]) -> tuple[bool, str]:
     request_data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -655,7 +692,8 @@ def main() -> int:
                 torsoInclineDeg=round(torso_incline_deg, 1),
             )
             cv_assist = evaluate_cv_hook(CvHookRequest(signal=signal))
-            person_down_possible = cv_assist.personDownHint.status in {"possible", "likely"}
+            lying_confidence = signal.postureConfidence if signal.bodyPosture == "lying" else 0.0
+            trigger_ready = lying_confidence > 0.60 and signal.eyesClosedConfidence > 0.80
 
             if live_signal_url and signal.frameTimestampMs - last_live_post_ms >= max(
                 250, args.post_interval_ms
@@ -666,9 +704,25 @@ def main() -> int:
                 last_live_post_ms = signal.frameTimestampMs
 
             if hitl_enabled:
-                started = questionnaire.maybe_start(
-                    person_down_possible=person_down_possible,
+                victim_snapshot = None
+                if trigger_ready and not questionnaire.auto_prompt_ready:
+                    victim_snapshot = build_victim_snapshot_payload(
+                        frame,
+                        signal.frameTimestampMs,
+                        lying_confidence=lying_confidence,
+                        eyes_closed_confidence=signal.eyesClosedConfidence,
+                    )
+                    if victim_snapshot is None:
+                        print("Warning: unable to capture victim snapshot at trigger moment.")
+
+                started = questionnaire.set_auto_prompt_ready(
+                    trigger_ready=trigger_ready,
                     timestamp_ms=signal.frameTimestampMs,
+                    status=(
+                        "Trigger detected (lying>0.60 and eyes-closed>0.80). "
+                        "Press H to start questionnaire."
+                    ),
+                    victim_snapshot=victim_snapshot,
                 )
                 if started:
                     print(questionnaire.last_status)
@@ -683,6 +737,7 @@ def main() -> int:
                             cv_assist.personDownHint.confidence,
                             signal.frameTimestampMs,
                         ),
+                        victim_snapshot=questionnaire.pending_victim_snapshot,
                     )
                     submitted, submit_status, response = post_json(
                         dispatch_request_url, dispatch_payload
@@ -755,6 +810,11 @@ def main() -> int:
                     "posture: "
                     f"{signal.bodyPosture} ({signal.postureConfidence:.2f}), "
                     f"eyes_closed: {signal.eyesClosedConfidence:.2f}"
+                ),
+                (
+                    "hitl_trigger: "
+                    f"{'ready' if trigger_ready else 'idle'} "
+                    f"(lying={lying_confidence:.2f}, eyes={signal.eyesClosedConfidence:.2f})"
                 ),
                 f"target_lock: {'locked' if stabilized_target.isLocked else 'tracking'}",
                 f"api_stream: {live_post_status}",

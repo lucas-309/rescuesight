@@ -17,6 +17,7 @@ import type {
   TriageAnswers,
   UpdateDispatchRequest,
   UpdateIncidentRequest,
+  VictimSnapshot,
   XrDeviceContext,
   XrIncidentActionUpdateRequest,
   XrCvSignalInput,
@@ -97,6 +98,7 @@ const DISPATCH_STATUS_VALUES: DispatchRequestStatus[] = [
   "dispatched",
   "resolved",
 ];
+const IMAGE_DATA_URL_PATTERN = /^data:image\/(jpeg|jpg|png);base64,[A-Za-z0-9+/=]+$/;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -338,6 +340,35 @@ const isValidDispatchLocation = (value: unknown): value is CreateDispatchRequest
   return true;
 };
 
+const isValidVictimSnapshot = (value: unknown): value is VictimSnapshot => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (
+    typeof value.imageDataUrl !== "string" ||
+    value.imageDataUrl.length < 32 ||
+    value.imageDataUrl.length > 6_000_000 ||
+    !IMAGE_DATA_URL_PATTERN.test(value.imageDataUrl)
+  ) {
+    return false;
+  }
+
+  if (value.capturedAtIso !== undefined && typeof value.capturedAtIso !== "string") {
+    return false;
+  }
+
+  if (value.frameTimestampMs !== undefined && !isFiniteNumber(value.frameTimestampMs)) {
+    return false;
+  }
+
+  if (value.triggerReason !== undefined && typeof value.triggerReason !== "string") {
+    return false;
+  }
+
+  return true;
+};
+
 const isValidEmergencyQuestionnaire = (
   value: unknown,
 ): value is CreateDispatchRequest["questionnaire"] => {
@@ -439,6 +470,10 @@ export const isValidCreateDispatchRequest = (
   }
 
   if (!isValidPersonDownSignal(value.personDownSignal)) {
+    return false;
+  }
+
+  if (value.victimSnapshot !== undefined && !isValidVictimSnapshot(value.victimSnapshot)) {
     return false;
   }
 
@@ -723,10 +758,18 @@ export const dispatchQuestionnairePayloadShape = {
   notes: "string (optional)",
 };
 
+export const dispatchVictimSnapshotPayloadShape = {
+  imageDataUrl: "data:image/jpeg;base64,... | data:image/png;base64,...",
+  capturedAtIso: "string (optional)",
+  frameTimestampMs: "number (optional)",
+  triggerReason: "string (optional)",
+};
+
 export const createDispatchRequestPayloadShape = {
   questionnaire: dispatchQuestionnairePayloadShape,
   location: dispatchLocationPayloadShape,
   personDownSignal: personDownSignalPayloadShape,
+  victimSnapshot: dispatchVictimSnapshotPayloadShape,
   emergencyCallRequested: "boolean (optional)",
 };
 

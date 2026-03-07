@@ -52,6 +52,7 @@ const copyDispatch = (request: DispatchRequest): DispatchRequest => ({
   location: { ...request.location },
   questionnaire: { ...request.questionnaire },
   personDownSignal: { ...request.personDownSignal },
+  victimSnapshot: request.victimSnapshot ? { ...request.victimSnapshot } : undefined,
   assignment: request.assignment ? { ...request.assignment } : undefined,
 });
 
@@ -110,6 +111,7 @@ export class InMemoryDispatchStore {
         ...payload.questionnaire,
       },
       personDownSignal: signal,
+      victimSnapshot: payload.victimSnapshot ? { ...payload.victimSnapshot } : undefined,
       emergencyCallRequested: payload.emergencyCallRequested ?? true,
       dispatchNotes: "",
       safetyNotice: SAFETY_NOTICE,

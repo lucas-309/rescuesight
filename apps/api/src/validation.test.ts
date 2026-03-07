@@ -230,9 +230,42 @@ test("isValidCreateDispatchRequest accepts valid questionnaire + location payloa
         confidence: 0.74,
         source: "cv",
       },
+      victimSnapshot: {
+        imageDataUrl: "data:image/jpeg;base64,ZmFrZQ==",
+        capturedAtIso: "2026-03-07T00:00:00Z",
+        frameTimestampMs: 1731001010,
+      },
       emergencyCallRequested: true,
     }),
     true,
+  );
+});
+
+test("isValidCreateDispatchRequest rejects invalid victim snapshot data URL", () => {
+  assert.equal(
+    isValidCreateDispatchRequest({
+      questionnaire: {
+        responsiveness: "unresponsive",
+        breathing: "abnormal_or_absent",
+        pulse: "unknown",
+        severeBleeding: false,
+        majorTrauma: false,
+      },
+      location: {
+        label: "Main lobby",
+        latitude: 40.758,
+        longitude: -73.9855,
+      },
+      personDownSignal: {
+        status: "person_down",
+        confidence: 0.74,
+        source: "cv",
+      },
+      victimSnapshot: {
+        imageDataUrl: "http://example.com/not-allowed.jpg",
+      },
+    }),
+    false,
   );
 });
 

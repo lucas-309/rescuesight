@@ -11,6 +11,13 @@ export interface PersonDownSignal {
   observedAtIso?: string;
 }
 
+export interface VictimSnapshot {
+  imageDataUrl: string;
+  capturedAtIso?: string;
+  frameTimestampMs?: number;
+  triggerReason?: string;
+}
+
 export interface DispatchLocation {
   label: string;
   latitude: number;
@@ -49,6 +56,7 @@ export interface CreateDispatchRequest {
   questionnaire: EmergencyQuestionnaire;
   location: DispatchLocation;
   personDownSignal: PersonDownSignal;
+  victimSnapshot?: VictimSnapshot;
   emergencyCallRequested?: boolean;
 }
 
@@ -67,6 +75,7 @@ export interface DispatchRequest {
   location: DispatchLocation;
   questionnaire: EmergencyQuestionnaire;
   personDownSignal: PersonDownSignal;
+  victimSnapshot?: VictimSnapshot;
   emergencyCallRequested: boolean;
   assignment?: DispatchAssignment;
   dispatchNotes: string;

@@ -253,17 +253,36 @@ describe("RescueSight API routes", () => {
           confidence: 0.83,
           source: "cv",
         },
+        victimSnapshot: {
+          imageDataUrl: "data:image/jpeg;base64,ZmFrZQ==",
+          capturedAtIso: "2026-03-07T00:00:00Z",
+          frameTimestampMs: 1731001200,
+          triggerReason: "lying>0.60 && eyesClosed>0.80",
+        },
         emergencyCallRequested: true,
       }),
     });
     assert.equal(createDispatchResponse.status, 201);
     const createdDispatchBody = (await createDispatchResponse.json()) as {
-      request: { id: string; status: string; priority: string };
+      request: {
+        id: string;
+        status: string;
+        priority: string;
+        victimSnapshot?: { imageDataUrl: string; triggerReason?: string };
+      };
       backendEscalation: { queued: boolean; requestId: string };
     };
     assert.ok(createdDispatchBody.request.id);
     assert.equal(createdDispatchBody.request.status, "pending_review");
     assert.equal(createdDispatchBody.request.priority, "critical");
+    assert.equal(
+      createdDispatchBody.request.victimSnapshot?.imageDataUrl,
+      "data:image/jpeg;base64,ZmFrZQ==",
+    );
+    assert.equal(
+      createdDispatchBody.request.victimSnapshot?.triggerReason,
+      "lying>0.60 && eyesClosed>0.80",
+    );
     assert.equal(createdDispatchBody.backendEscalation.queued, true);
     assert.equal(createdDispatchBody.backendEscalation.requestId, createdDispatchBody.request.id);
 
