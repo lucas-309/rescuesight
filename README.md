@@ -66,6 +66,29 @@ npm run dev:web
   - actions already taken
   - responder notes
 - Responder handoff summary card with copy-to-clipboard export
+- Incident persistence workflow:
+  - save incident record from web UI
+  - update saved record with revised timeline/handoff
+  - incident id display for retrieval/debugging
+
+## API Endpoints
+
+- `GET /health`
+- `GET /api/triage/questions`
+- `POST /api/triage/evaluate`
+- `POST /api/incidents`
+- `GET /api/incidents`
+- `GET /api/incidents/:incidentId`
+- `PATCH /api/incidents/:incidentId`
+- `GET /api/incidents/:incidentId/handoff`
+
+## Testing
+
+- Run full API tests:
+
+```bash
+npm run test:api
+```
 
 ## Safety Positioning
 

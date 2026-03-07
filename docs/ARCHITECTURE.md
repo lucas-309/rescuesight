@@ -18,9 +18,12 @@ Responsibilities:
 - Display routed emergency pathway and action steps
 - Provide CPR metronome helper for possible cardiac arrest cases
 - Generate responder handoff summary text for export
+- Persist/update incident records and handoff payloads through API
 
 Current integration:
 - `POST /api/triage/evaluate`
+- `POST /api/incidents`
+- `PATCH /api/incidents/:incidentId`
 
 ## 2) `apps/api`
 
@@ -28,17 +31,25 @@ Responsibilities:
 - Validate triage payloads
 - Execute deterministic triage routing logic
 - Return pathway result with urgency and action steps
+- Persist incident timeline/handoff records in in-memory store
+- Expose incident retrieval and handoff payload endpoints
 
 Current endpoints:
 - `GET /health`
 - `GET /api/triage/questions`
 - `POST /api/triage/evaluate`
+- `POST /api/incidents`
+- `GET /api/incidents`
+- `GET /api/incidents/:incidentId`
+- `PATCH /api/incidents/:incidentId`
+- `GET /api/incidents/:incidentId/handoff`
 
 ## 3) `packages/shared`
 
 Responsibilities:
 - Shared interfaces for triage inputs and outputs
 - Canonical pathway identifiers
+- Shared incident timeline and persistence payload types
 
 ## Data Flow
 
@@ -48,6 +59,8 @@ Responsibilities:
 4. API validates payload and runs decision rules.
 5. API returns `TriageEvaluationResponse` with pathway + action steps.
 6. Web app renders result, optional CPR metronome helper, and responder handoff summary.
+7. Web app persists incident timeline/handoff data via incident endpoints.
+8. API stores incident record and supports later retrieval/update.
 
 ## Triage Rules (Current)
 

@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react";
 import type {
+  AedStatus,
   HeartRelatedSigns,
+  IncidentActionKey,
+  IncidentTimeline,
   StrokeSigns,
   TriageAnswers,
   TriageEvaluationResponse,
@@ -14,22 +17,6 @@ interface ScenarioPreset {
   title: string;
   description: string;
   answers: TriageAnswers;
-}
-
-type IncidentActionKey =
-  | "emsCalled"
-  | "cprStarted"
-  | "aedRequested"
-  | "aedArrived"
-  | "strokeOnsetRecorded";
-
-type AedStatus = "unknown" | "not_available" | "retrieval_in_progress" | "on_scene";
-
-interface IncidentTimeline {
-  firstObservedAtLocal: string;
-  responderNotes: string;
-  aedStatus: AedStatus;
-  actionsTaken: Record<IncidentActionKey, boolean>;
 }
 
 const defaultStrokeSigns: StrokeSigns = {
@@ -197,9 +184,16 @@ export const App = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [savingIncident, setSavingIncident] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [savedIncidentId, setSavedIncidentId] = useState<string | null>(null);
 
-  const endpoint = useMemo(
+  const evaluateEndpoint = useMemo(
     () => `${API_BASE_URL}/api/triage/evaluate`.replace(/\/\//g, "/").replace("http:/", "http://").replace("https:/", "https://"),
+    [],
+  );
+  const incidentsEndpoint = useMemo(
+    () => `${API_BASE_URL}/api/incidents`.replace(/\/\//g, "/").replace("http:/", "http://").replace("https:/", "https://"),
     [],
   );
 
@@ -238,6 +232,8 @@ export const App = () => {
     setResult(null);
     setError(null);
     setCopyStatus(null);
+    setSaveStatus(null);
+    setSavedIncidentId(null);
     setTimeline((current) => ({
       ...current,
       firstObservedAtLocal: current.firstObservedAtLocal || toLocalDateTimeInput(new Date()),
@@ -248,9 +244,10 @@ export const App = () => {
     setLoading(true);
     setError(null);
     setCopyStatus(null);
+    setSaveStatus(null);
 
     try {
-      const response = await fetch(endpoint, {
+      const response = await fetch(evaluateEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(answers),
@@ -276,6 +273,8 @@ export const App = () => {
     setResult(null);
     setError(null);
     setCopyStatus(null);
+    setSaveStatus(null);
+    setSavedIncidentId(null);
   };
 
   const currentResult = result?.result;
@@ -363,6 +362,60 @@ export const App = () => {
       setCopyStatus("Responder summary copied.");
     } catch {
       setCopyStatus("Clipboard was unavailable. Copy summary manually.");
+    }
+  };
+
+  const saveIncident = async () => {
+    if (!handoffSummary) {
+      return;
+    }
+
+    setSavingIncident(true);
+    setSaveStatus(null);
+
+    try {
+      if (!savedIncidentId) {
+        const response = await fetch(incidentsEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            answers,
+            timeline,
+            handoffSummary,
+            source: "web",
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Incident API returned ${response.status}`);
+        }
+
+        const payload = (await response.json()) as { incident: { id: string } };
+        setSavedIncidentId(payload.incident.id);
+        setSaveStatus(`Incident record saved (${payload.incident.id}).`);
+        return;
+      }
+
+      const response = await fetch(`${incidentsEndpoint}/${savedIncidentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          timeline,
+          handoffSummary,
+          status: "open",
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Incident API returned ${response.status}`);
+      }
+
+      setSaveStatus(`Incident record updated (${savedIncidentId}).`);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
+      setSaveStatus(`Unable to save incident record: ${message}`);
+    } finally {
+      setSavingIncident(false);
     }
   };
 
@@ -617,10 +670,21 @@ export const App = () => {
                 Share this with arriving responders to preserve timeline and observed context.
               </p>
               <textarea readOnly value={handoffSummary} />
-              <button type="button" className="action-button" onClick={copySummary}>
-                Copy Summary
-              </button>
+              <div className="actions-row">
+                <button type="button" className="action-button" onClick={copySummary}>
+                  Copy Summary
+                </button>
+                <button type="button" className="action-button secondary" disabled={savingIncident} onClick={saveIncident}>
+                  {savingIncident
+                    ? "Saving..."
+                    : savedIncidentId
+                      ? "Update Incident Record"
+                      : "Save Incident Record"}
+                </button>
+              </div>
+              {savedIncidentId ? <p className="helper-text">Incident ID: {savedIncidentId}</p> : null}
               {copyStatus ? <p className="status-message">{copyStatus}</p> : null}
+              {saveStatus ? <p className="status-message">{saveStatus}</p> : null}
             </section>
           ) : null}
         </section>

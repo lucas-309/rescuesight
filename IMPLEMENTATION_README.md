@@ -105,18 +105,34 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
   - root `README.md`
   - `docs/ARCHITECTURE.md`
 - Completed Phase 0 and initial Phase 1 vertical slice.
-- Attempted dependency installation (`npm install`) for validation, but command hung in current restricted environment; runtime verification remains pending after install succeeds.
+- Dependency installation now completed successfully (`npm install`) after elevated approval for network-restricted environment.
 - Implemented Phase 2 demo-depth features in web UI:
   - scenario presets for rapid pathway simulation
   - incident timeline capture (first observed time, actions taken, notes)
   - AED status/retrieval prompt state in timeline section
   - responder handoff summary card with copy-to-clipboard export
 - Updated docs (`README.md`, `docs/ARCHITECTURE.md`) to include the new workflow capabilities.
+- Added API-side incident persistence support:
+  - new in-memory incident store
+  - create/list/get/update incident endpoints
+  - handoff retrieval endpoint
+- Connected web handoff panel to persistence API:
+  - save incident record
+  - update existing incident record
+  - show persisted incident ID in UI
+- Added extensive automated tests:
+  - triage routing unit tests
+  - incident store unit tests
+  - validation unit tests
+  - API integration tests for happy-path and error-path incident lifecycle
+- Validation executed successfully after implementation:
+  - `npm run typecheck`
+  - `npm run test:api`
+  - `npm run build`
 
 ## Next Planned Steps (Immediate)
 
-1. Add unit tests for triage routing logic in `apps/api`.
-2. Add API support for optional timeline persistence/handoff payload storage.
-3. Add frontend validation hints for required escalation fields before handoff export.
-4. Start Phase 3 RAG scaffolding with strict safety filters.
-5. Add initial MCP tool orchestration skeleton.
+1. Add frontend validation hints for required escalation fields before handoff export.
+2. Add optional durable persistence adapter (file/db) behind the incident store interface.
+3. Start Phase 3 RAG scaffolding with strict safety filters.
+4. Add initial MCP tool orchestration skeleton.
