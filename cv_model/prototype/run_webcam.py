@@ -1045,7 +1045,6 @@ def main() -> int:
                         submitted=False,
                     )
 
-            frame_h, frame_w = frame.shape[:2]
             placement_confirmed = (
                 signal.handPlacementStatus == "correct" and signal.placementConfidence >= 0.68
             )

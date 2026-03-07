@@ -239,24 +239,32 @@ def _parse_cv_signal(payload: dict[str, object]) -> CVSignal:
 
 
 def _infer_person_down_hint(signal: CVSignal) -> PersonDownHint:
-    confidence = 0.0
+    confidence = 0.05
     rationale: list[str] = []
+    has_cpr_pattern = (
+        signal.handPlacementStatus != "unknown"
+        and signal.placementConfidence >= 0.55
+        and signal.compressionRateBpm >= 85
+        and signal.compressionRhythmQuality != "unknown"
+    )
 
     if signal.bodyPosture == "lying":
-        confidence += 0.12 + 0.34 * signal.postureConfidence
+        confidence += 0.20 + 0.42 * signal.postureConfidence
         rationale.append(f"lying posture ({signal.postureConfidence:.2f})")
     elif signal.bodyPosture == "sitting":
-        confidence -= 0.32 * max(0.3, signal.postureConfidence)
+        confidence -= 0.20 * max(0.3, signal.postureConfidence)
         rationale.append(f"sitting posture ({signal.postureConfidence:.2f})")
     elif signal.bodyPosture == "upright":
-        confidence -= 0.45 * max(0.3, signal.postureConfidence)
+        confidence -= 0.28 * max(0.3, signal.postureConfidence)
         rationale.append(f"upright posture ({signal.postureConfidence:.2f})")
     else:
         rationale.append("posture unknown")
 
-    if signal.eyesClosedConfidence >= 0.25:
-        confidence += 0.18 * signal.eyesClosedConfidence
+    if signal.eyesClosedConfidence >= 0.40:
+        confidence += 0.16 * signal.eyesClosedConfidence
         rationale.append(f"eyes-closed signal ({signal.eyesClosedConfidence:.2f})")
+    elif signal.eyesClosedConfidence >= 0.20:
+        confidence += 0.06 * signal.eyesClosedConfidence
 
     if signal.visibility == "full":
         confidence += 0.12
@@ -266,34 +274,39 @@ def _infer_person_down_hint(signal: CVSignal) -> PersonDownHint:
         rationale.append("partial torso visibility")
 
     if signal.handPlacementStatus != "unknown":
-        confidence += 0.10 * signal.placementConfidence
+        confidence += 0.12 * signal.placementConfidence
         rationale.append("hand placement tracked")
 
     if signal.compressionRateBpm >= 85:
-        confidence += 0.12
+        confidence += 0.20
         rationale.append("compression-like motion present")
 
     if signal.compressionRhythmQuality in {"good", "too_slow", "too_fast", "inconsistent"}:
-        confidence += 0.06
+        confidence += 0.08
         rationale.append("rhythm classification available")
 
-    if signal.visibility == "poor":
-        confidence = min(confidence, 0.30)
+    if has_cpr_pattern:
+        confidence += 0.24
+        rationale.append("consistent CPR pattern boost")
 
-    # Guardrails to reduce false positives for sitting/standing people.
+    if signal.visibility == "poor":
+        confidence = min(confidence, 0.35)
+
+    # Guardrails to reduce false positives for standing/sitting cases without CPR evidence.
     if (
         signal.bodyPosture in {"upright", "sitting"}
-        and signal.postureConfidence >= 0.55
-        and signal.eyesClosedConfidence < 0.65
+        and signal.postureConfidence >= 0.75
+        and signal.eyesClosedConfidence < 0.45
+        and not has_cpr_pattern
     ):
         confidence = min(confidence, 0.35)
         rationale.append("upright/sitting suppression applied")
 
     confidence = float(_clamp(confidence, 0.0, 1.0))
-    if confidence >= 0.60:
+    if confidence >= 0.58:
         message = "CV indicates a likely person-down context. Confirm and proceed with emergency workflow."
         status = "likely"
-    elif confidence >= 0.40:
+    elif confidence >= 0.38:
         message = "CV indicates a possible person-down context. Confirm with bystander checklist."
         status = "possible"
     else:
