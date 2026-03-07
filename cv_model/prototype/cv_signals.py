@@ -12,6 +12,10 @@ LEFT_SHOULDER = 11
 RIGHT_SHOULDER = 12
 LEFT_HIP = 23
 RIGHT_HIP = 24
+LEFT_KNEE = 25
+RIGHT_KNEE = 26
+LEFT_ANKLE = 27
+RIGHT_ANKLE = 28
 
 # MediaPipe Hand landmark indices used to estimate palm center.
 WRIST = 0
@@ -33,6 +37,10 @@ class CVSignal:
     compressionRhythmQuality: str
     visibility: str
     frameTimestampMs: int
+    bodyPosture: str = "unknown"
+    postureConfidence: float = 0.0
+    eyesClosedConfidence: float = 0.0
+    torsoInclineDeg: float = 0.0
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -547,6 +555,123 @@ def infer_visibility(
     if has_hand or has_live_chest_center:
         return "partial"
     return "poor"
+
+
+def estimate_body_posture(
+    pose_landmarks: Optional[Sequence[object]],
+) -> tuple[str, float, float]:
+    if not pose_landmarks:
+        return "unknown", 0.0, 0.0
+
+    left_shoulder = _landmark_at(pose_landmarks, LEFT_SHOULDER)
+    right_shoulder = _landmark_at(pose_landmarks, RIGHT_SHOULDER)
+    left_hip = _landmark_at(pose_landmarks, LEFT_HIP)
+    right_hip = _landmark_at(pose_landmarks, RIGHT_HIP)
+    if not all([left_shoulder, right_shoulder, left_hip, right_hip]):
+        return "unknown", 0.0, 0.0
+
+    shoulder_mid = _midpoint(left_shoulder, right_shoulder)
+    hip_mid = _midpoint(left_hip, right_hip)
+    torso_dx = hip_mid.x - shoulder_mid.x
+    torso_dy = hip_mid.y - shoulder_mid.y
+    torso_norm = abs(torso_dx) + abs(torso_dy)
+    if torso_norm < 1e-6:
+        return "unknown", 0.0, 0.0
+
+    verticality = _clamp(abs(torso_dy) / torso_norm, 0.0, 1.0)
+    horizontality = 1.0 - verticality
+    torso_incline_deg = abs(degrees(atan2(torso_dy, torso_dx)))
+    if torso_incline_deg > 90.0:
+        torso_incline_deg = 180.0 - torso_incline_deg
+
+    torso_visibility = (
+        float(getattr(left_shoulder, "visibility", 0.0))
+        + float(getattr(right_shoulder, "visibility", 0.0))
+        + float(getattr(left_hip, "visibility", 0.0))
+        + float(getattr(right_hip, "visibility", 0.0))
+    ) / 4.0
+
+    shoulder_above_hip = shoulder_mid.y + 0.01 < hip_mid.y
+
+    left_knee = _landmark_at(pose_landmarks, LEFT_KNEE)
+    right_knee = _landmark_at(pose_landmarks, RIGHT_KNEE)
+    knee_mid = _midpoint(left_knee, right_knee) if left_knee and right_knee else None
+    knee_verticality = 0.0
+    has_knee = False
+    if knee_mid is not None:
+        knee_vec_norm = abs(knee_mid.x - hip_mid.x) + abs(knee_mid.y - hip_mid.y)
+        if knee_vec_norm > 1e-6:
+            knee_verticality = _clamp(abs(knee_mid.y - hip_mid.y) / knee_vec_norm, 0.0, 1.0)
+            has_knee = True
+
+    left_ankle = _landmark_at(pose_landmarks, LEFT_ANKLE)
+    right_ankle = _landmark_at(pose_landmarks, RIGHT_ANKLE)
+    ankle_mid = _midpoint(left_ankle, right_ankle) if left_ankle and right_ankle else None
+    lower_body_verticality = 0.0
+    has_ankle = False
+    if ankle_mid is not None:
+        lower_vec_norm = abs(ankle_mid.x - hip_mid.x) + abs(ankle_mid.y - hip_mid.y)
+        if lower_vec_norm > 1e-6:
+            lower_body_verticality = _clamp(abs(ankle_mid.y - hip_mid.y) / lower_vec_norm, 0.0, 1.0)
+            has_ankle = True
+
+    lying_score = horizontality * 0.74 + (1.0 - max(0.0, torso_visibility - 0.45)) * 0.06
+    if has_ankle:
+        lying_score += (1.0 - lower_body_verticality) * 0.12
+    lying_score = _clamp(lying_score, 0.0, 1.0)
+
+    upright_score = verticality * (0.68 if shoulder_above_hip else 0.45)
+    if has_ankle:
+        upright_score += lower_body_verticality * 0.20
+    upright_score = _clamp(upright_score, 0.0, 1.0)
+
+    sitting_score = verticality * 0.34
+    if has_knee:
+        sitting_score += (1.0 - knee_verticality) * 0.45
+        if knee_mid is not None and knee_mid.y <= hip_mid.y + 0.07:
+            sitting_score += 0.16
+    if has_ankle and not has_knee:
+        sitting_score += (1.0 - lower_body_verticality) * 0.18
+    sitting_score = _clamp(sitting_score, 0.0, 1.0)
+
+    posture = "unknown"
+    confidence = 0.0
+    candidates = [
+        ("lying", lying_score),
+        ("sitting", sitting_score),
+        ("upright", upright_score),
+    ]
+    best_posture, best_score = max(candidates, key=lambda item: item[1])
+    if best_score >= 0.38:
+        posture = best_posture
+        confidence = best_score * _clamp(torso_visibility + 0.2, 0.2, 1.0)
+
+    return posture, _clamp(confidence, 0.0, 1.0), torso_incline_deg
+
+
+def estimate_eyes_closed_confidence(face_result: object) -> float:
+    blendshapes_batch = getattr(face_result, "face_blendshapes", None)
+    if not blendshapes_batch:
+        return 0.0
+
+    best_score = 0.0
+    for blendshapes in blendshapes_batch:
+        if not blendshapes:
+            continue
+        by_name = {
+            str(getattr(entry, "category_name", "")): float(getattr(entry, "score", 0.0))
+            for entry in blendshapes
+        }
+        blink_left = by_name.get("eyeBlinkLeft", 0.0)
+        blink_right = by_name.get("eyeBlinkRight", 0.0)
+        squint_left = by_name.get("eyeSquintLeft", 0.0)
+        squint_right = by_name.get("eyeSquintRight", 0.0)
+        closed_score = 0.65 * ((blink_left + blink_right) / 2.0) + 0.35 * (
+            (squint_left + squint_right) / 2.0
+        )
+        best_score = max(best_score, _clamp(closed_score, 0.0, 1.0))
+
+    return _clamp(best_score, 0.0, 1.0)
 
 
 def distance(a: Point2D, b: Point2D) -> float:

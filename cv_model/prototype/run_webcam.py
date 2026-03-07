@@ -25,6 +25,8 @@ from cv_signals import (
     classify_hand_placement,
     distance,
     estimate_cpr_target,
+    estimate_body_posture,
+    estimate_eyes_closed_confidence,
     estimate_hand_center,
     infer_visibility,
     now_ms,
@@ -37,6 +39,10 @@ POSE_MODEL_URL = (
 HAND_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
     "hand_landmarker/float16/latest/hand_landmarker.task"
+)
+FACE_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+    "face_landmarker/float16/latest/face_landmarker.task"
 )
 
 
@@ -136,12 +142,14 @@ def ensure_task_model(model_path: Path, url: str) -> None:
     urllib.request.urlretrieve(url, str(model_path))
 
 
-def create_landmarkers(model_dir: Path) -> tuple[object, object]:
+def create_landmarkers(model_dir: Path) -> tuple[object, object, object]:
     pose_model_path = model_dir / "pose_landmarker_lite.task"
     hand_model_path = model_dir / "hand_landmarker.task"
+    face_model_path = model_dir / "face_landmarker.task"
 
     ensure_task_model(pose_model_path, POSE_MODEL_URL)
     ensure_task_model(hand_model_path, HAND_MODEL_URL)
+    ensure_task_model(face_model_path, FACE_MODEL_URL)
 
     pose_options = mp_vision.PoseLandmarkerOptions(
         base_options=mp_python.BaseOptions(model_asset_path=str(pose_model_path)),
@@ -160,10 +168,20 @@ def create_landmarkers(model_dir: Path) -> tuple[object, object]:
         min_hand_presence_confidence=0.5,
         min_tracking_confidence=0.5,
     )
+    face_options = mp_vision.FaceLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=str(face_model_path)),
+        running_mode=mp_vision.RunningMode.VIDEO,
+        num_faces=1,
+        min_face_detection_confidence=0.45,
+        min_face_presence_confidence=0.45,
+        min_tracking_confidence=0.45,
+        output_face_blendshapes=True,
+    )
 
     pose_landmarker = mp_vision.PoseLandmarker.create_from_options(pose_options)
     hand_landmarker = mp_vision.HandLandmarker.create_from_options(hand_options)
-    return pose_landmarker, hand_landmarker
+    face_landmarker = mp_vision.FaceLandmarker.create_from_options(face_options)
+    return pose_landmarker, hand_landmarker, face_landmarker
 
 
 def select_primary_hand(
@@ -493,7 +511,12 @@ def build_dispatch_location_payload(args: argparse.Namespace) -> dict[str, objec
 
 
 def build_person_down_signal_payload(cv_status: str, cv_confidence: float, timestamp_ms: int) -> dict[str, object]:
-    mapped_status = "person_down" if cv_status == "possible" else "uncertain"
+    if cv_confidence >= 0.6 or cv_status == "likely":
+        mapped_status = "person_down"
+    elif cv_confidence >= 0.4 or cv_status == "possible":
+        mapped_status = "uncertain"
+    else:
+        mapped_status = "not_person_down"
     return {
         "status": mapped_status,
         "confidence": round(max(0.0, min(1.0, float(cv_confidence))), 3),
@@ -543,7 +566,7 @@ def main() -> int:
     live_post_status = "live stream disabled"
 
     model_dir = Path(args.model_dir)
-    pose_landmarker, hand_landmarker = create_landmarkers(model_dir)
+    pose_landmarker, hand_landmarker, face_landmarker = create_landmarkers(model_dir)
 
     try:
         while True:
@@ -559,6 +582,7 @@ def main() -> int:
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             pose_result = pose_landmarker.detect_for_video(mp_image, timestamp_ms)
             hands_result = hand_landmarker.detect_for_video(mp_image, timestamp_ms)
+            face_result = face_landmarker.detect_for_video(mp_image, timestamp_ms)
 
             live_target, chest_conf = estimate_cpr_target(
                 pose_result.pose_landmarks[0] if pose_result.pose_landmarks else None
@@ -583,6 +607,10 @@ def main() -> int:
                 has_hand=hand_center is not None,
                 using_chest_fallback=using_chest_fallback,
             )
+            body_posture, posture_confidence, torso_incline_deg = estimate_body_posture(
+                pose_result.pose_landmarks[0] if pose_result.pose_landmarks else None
+            )
+            eyes_closed_confidence = estimate_eyes_closed_confidence(face_result)
 
             signal = CVSignal(
                 handPlacementStatus=placement_status,
@@ -591,9 +619,13 @@ def main() -> int:
                 compressionRhythmQuality=rhythm_quality,
                 visibility=visibility,
                 frameTimestampMs=now_ms(),
+                bodyPosture=body_posture,
+                postureConfidence=round(posture_confidence, 3),
+                eyesClosedConfidence=round(eyes_closed_confidence, 3),
+                torsoInclineDeg=round(torso_incline_deg, 1),
             )
             cv_assist = evaluate_cv_hook(CvHookRequest(signal=signal))
-            person_down_possible = cv_assist.personDownHint.status == "possible"
+            person_down_possible = cv_assist.personDownHint.status in {"possible", "likely"}
 
             if live_signal_url and signal.frameTimestampMs - last_live_post_ms >= max(
                 250, args.post_interval_ms
@@ -689,6 +721,11 @@ def main() -> int:
                     "person_down_hint: "
                     f"{cv_assist.personDownHint.status} ({cv_assist.personDownHint.confidence:.2f})"
                 ),
+                (
+                    "posture: "
+                    f"{signal.bodyPosture} ({signal.postureConfidence:.2f}), "
+                    f"eyes_closed: {signal.eyesClosedConfidence:.2f}"
+                ),
                 f"target_lock: {'locked' if stabilized_target.isLocked else 'tracking'}",
                 f"api_stream: {live_post_status}",
             ]
@@ -723,6 +760,7 @@ def main() -> int:
     finally:
         pose_landmarker.close()
         hand_landmarker.close()
+        face_landmarker.close()
 
     cap.release()
     cv2.destroyAllWindows()
