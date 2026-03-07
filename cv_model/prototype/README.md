@@ -118,6 +118,7 @@ On first run, the script automatically downloads these pre-trained MediaPipe tas
 Optional flags:
 
 - `--camera-index 0`
+- `--camera-zoom 0` (default; request widest FOV). Use `--camera-zoom -1` to keep webcam/device default.
 - `--max-fallback-frames 12`
 - `--post-url http://127.0.0.1:8080/api/cv/live-signal`
 - `--post-interval-ms 1000`

@@ -50,6 +50,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RescueSight CV prototype (MediaPipe baseline)")
     parser.add_argument("--camera-index", type=int, default=0, help="Webcam index")
     parser.add_argument(
+        "--camera-zoom",
+        type=float,
+        default=0.0,
+        help=(
+            "Requested camera zoom level. Use 0 for widest field of view (default), "
+            "or -1 to keep the webcam's current zoom."
+        ),
+    )
+    parser.add_argument(
         "--max-fallback-frames",
         type=int,
         default=12,
@@ -544,6 +553,26 @@ def post_live_signal(url: str, payload: dict[str, object]) -> tuple[bool, str]:
         return False, f"live stream offline ({exc.reason})"
 
 
+def configure_camera(cap: cv2.VideoCapture, args: argparse.Namespace) -> None:
+    if args.camera_zoom < 0:
+        return
+
+    zoom_prop = getattr(cv2, "CAP_PROP_ZOOM", None)
+    if zoom_prop is None:
+        print("OpenCV build does not expose CAP_PROP_ZOOM; using webcam default zoom.")
+        return
+
+    requested_zoom = float(args.camera_zoom)
+    set_result = cap.set(zoom_prop, requested_zoom)
+    reported_zoom = cap.get(zoom_prop)
+
+    if not set_result:
+        print("Webcam/backend did not accept CAP_PROP_ZOOM; using webcam default zoom.")
+        return
+
+    print(f"Camera zoom request applied (requested={requested_zoom:.2f}, reported={reported_zoom:.2f}).")
+
+
 def main() -> int:
     args = parse_args()
     api_base_url = args.api_base_url.strip().rstrip("/")
@@ -558,6 +587,7 @@ def main() -> int:
     if not cap.isOpened():
         print("Unable to open webcam. Try a different --camera-index.")
         return 1
+    configure_camera(cap, args)
 
     bpm_estimator = BpmEstimator()
     target_stabilizer = CprTargetStabilizer(max_fallback_frames=args.max_fallback_frames)

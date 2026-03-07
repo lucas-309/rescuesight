@@ -81,6 +81,40 @@ class TestCvHooks(unittest.TestCase):
         )
         self.assertFalse(second.requiresUserConfirmation)
 
+    def test_person_down_classifier_marks_likely_for_lying_closed_eyes(self) -> None:
+        response = evaluate_cv_hook(
+            parse_cv_hook_request(
+                {
+                    "signal": _sample_signal(
+                        bodyPosture="lying",
+                        postureConfidence=0.88,
+                        eyesClosedConfidence=0.72,
+                        compressionRateBpm=108,
+                        compressionRhythmQuality="good",
+                    )
+                }
+            )
+        )
+        self.assertEqual(response.personDownHint.status, "likely")
+        self.assertGreaterEqual(response.personDownHint.confidence, 0.6)
+
+    def test_person_down_classifier_suppresses_upright_open_eye_cases(self) -> None:
+        response = evaluate_cv_hook(
+            parse_cv_hook_request(
+                {
+                    "signal": _sample_signal(
+                        bodyPosture="upright",
+                        postureConfidence=0.9,
+                        eyesClosedConfidence=0.08,
+                        compressionRateBpm=112,
+                        compressionRhythmQuality="good",
+                    )
+                }
+            )
+        )
+        self.assertEqual(response.personDownHint.status, "unclear")
+        self.assertLess(response.personDownHint.confidence, 0.4)
+
     def test_parse_rejects_invalid_payload(self) -> None:
         with self.assertRaises(ValueError):
             parse_cv_hook_request({"signal": {"handPlacementStatus": "correct"}})
