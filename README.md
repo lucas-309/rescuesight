@@ -83,8 +83,10 @@ Then start API with `npm run dev:api` and submit `cvSignal` with XR triage paylo
 
 Webcam UX highlights:
 - person-down confidence rescaled so likely person-down states are easier to trigger
+- posture/eyes confidence smoothing plus trigger hysteresis to reduce false flicker
 - questionnaire appears as a dedicated, clearly active panel when initiated
 - explicit on-screen confirmation when a request is successfully sent to dashboard
+- victim snapshot now flows through live CV summary and dispatch queue so dashboard cards show scene imagery
 
 ## API Endpoints
 

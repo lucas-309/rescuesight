@@ -188,6 +188,14 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
   - separated questionnaire state presentation in webcam/operator view
   - added explicit request-sent confirmation (including request id when returned)
   - added web-side auto-generated SOAP report preview for EMT handoff context
+- Strengthened person-down reliability + dashboard imagery pipeline:
+  - added temporal smoothing for eyes-closed and lying confidence signals in webcam runtime
+  - replaced brittle single-frame trigger threshold with sustained evidence + hysteresis gating
+  - adjusted person-down inference weights in both CV hook service and API live-signal ingestion
+  - kept auto-trigger questionnaire prompt latched during short confidence drops (reduces flicker/lost snapshots)
+  - attached victim snapshots to live CV summary payloads and used them in web escalation submissions
+  - added dashboard/live-summary rendering support for snapshot images
+  - expanded tests for smoothing, posture/eye heuristics, validation, and live-summary snapshot flow
 
 ## Next Planned Steps (Immediate)
 
