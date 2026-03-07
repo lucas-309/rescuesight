@@ -61,6 +61,169 @@ const formatAgo = (value: string): string => {
   return `${hours}h ago`;
 };
 
+const formatLocationInline = (location: DispatchLocation): string =>
+  `${location.label} (${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)})`;
+
+const deriveAssessment = (
+  questionnaire: CreateDispatchRequest["questionnaire"],
+  liveSummary: CvLiveSummary | null,
+): { label: string; acuity: "critical" | "high"; rationale: string } => {
+  const reasons: string[] = [];
+
+  const likelyCardiacArrest =
+    questionnaire.responsiveness === "unresponsive" &&
+    questionnaire.breathing === "abnormal_or_absent";
+  if (likelyCardiacArrest) {
+    reasons.push("unresponsive with abnormal/absent breathing");
+    return {
+      label: "Possible out-of-hospital cardiac arrest",
+      acuity: "critical",
+      rationale: reasons.join("; "),
+    };
+  }
+
+  if (questionnaire.pulse === "absent") {
+    reasons.push("pulse documented as absent");
+    return {
+      label: "Possible circulatory collapse",
+      acuity: "critical",
+      rationale: reasons.join("; "),
+    };
+  }
+
+  if (questionnaire.severeBleeding) {
+    reasons.push("severe bleeding observed");
+    return {
+      label: "Possible hemorrhagic emergency",
+      acuity: "critical",
+      rationale: reasons.join("; "),
+    };
+  }
+
+  if (questionnaire.majorTrauma) {
+    reasons.push("major trauma suspected");
+    return {
+      label: "Possible major trauma emergency",
+      acuity: "critical",
+      rationale: reasons.join("; "),
+    };
+  }
+
+  if (
+    liveSummary?.personDownSignal.status === "person_down" &&
+    liveSummary.personDownSignal.confidence >= 0.75
+  ) {
+    reasons.push("high-confidence CV person-down signal");
+    return {
+      label: "High-risk person-down medical event",
+      acuity: "high",
+      rationale: reasons.join("; "),
+    };
+  }
+
+  if (questionnaire.breathing === "abnormal_or_absent") {
+    reasons.push("abnormal breathing reported");
+  }
+  if (questionnaire.responsiveness === "unknown") {
+    reasons.push("responsiveness remains unknown");
+  }
+  if (liveSummary?.personDownSignal.status === "uncertain") {
+    reasons.push("CV person-down status uncertain");
+  }
+
+  return {
+    label: "Undifferentiated medical emergency",
+    acuity: "high",
+    rationale: reasons.join("; ") || "limited findings available",
+  };
+};
+
+const buildSoapReportText = (
+  questionnaire: CreateDispatchRequest["questionnaire"],
+  liveSummary: CvLiveSummary | null,
+  location: DispatchLocation | null,
+): string => {
+  const generatedAt = new Date().toISOString();
+  const assessment = deriveAssessment(questionnaire, liveSummary);
+
+  const subjective = [
+    `Bystander questionnaire: responsiveness=${questionnaire.responsiveness}, breathing=${questionnaire.breathing}, pulse=${questionnaire.pulse}.`,
+    `Severe bleeding=${questionnaire.severeBleeding ? "yes" : "no"}, major trauma=${questionnaire.majorTrauma ? "yes" : "no"}.`,
+    questionnaire.notes?.trim()
+      ? `Bystander free-text notes: ${questionnaire.notes.trim()}`
+      : "Bystander free-text notes: none provided.",
+  ].join(" ");
+
+  const objectiveLines: string[] = [];
+  if (liveSummary) {
+    objectiveLines.push(
+      `CV source=${liveSummary.sourceDeviceId ?? "unknown"}, updated=${formatDateTime(liveSummary.updatedAtIso)}.`,
+    );
+    objectiveLines.push(
+      `Person-down=${liveSummary.personDownSignal.status} (${liveSummary.personDownSignal.confidence.toFixed(2)}).`,
+    );
+    objectiveLines.push(
+      `Compression=${liveSummary.signal.compressionRateBpm} BPM (${liveSummary.signal.compressionRhythmQuality}), placement=${liveSummary.signal.handPlacementStatus} (${liveSummary.signal.placementConfidence.toFixed(2)}), visibility=${liveSummary.signal.visibility}.`,
+    );
+  } else {
+    objectiveLines.push("Live CV summary unavailable at time of report generation.");
+  }
+
+  if (location) {
+    objectiveLines.push(`Scene location=${formatLocationInline(location)}.`);
+    if (location.indoorDescriptor) {
+      objectiveLines.push(`Indoor descriptor=${location.indoorDescriptor}.`);
+    }
+  } else {
+    objectiveLines.push("Scene location unavailable.");
+  }
+  const objective = objectiveLines.join(" ");
+
+  const planItems: string[] = [
+    "Activate/continue EMS dispatch and maintain continuous monitoring until handoff.",
+    "Re-check responsiveness, breathing, and pulse every 1-2 minutes or with status change.",
+  ];
+  if (assessment.acuity === "critical") {
+    planItems.push("Prioritize immediate critical-response pathway and rapid EMT arrival.");
+  }
+  if (questionnaire.responsiveness === "unresponsive" && questionnaire.breathing === "abnormal_or_absent") {
+    planItems.push("Begin/continue high-quality CPR and prepare AED if available.");
+  }
+  if (questionnaire.severeBleeding) {
+    planItems.push("Apply direct pressure and hemorrhage control measures.");
+  }
+  if (questionnaire.majorTrauma) {
+    planItems.push("Minimize movement and follow trauma precautions while awaiting EMT.");
+  }
+  planItems.push("Document timeline updates and transfer this report to responding EMT team.");
+  const plan = planItems.join(" ");
+
+  return [
+    "SOAP REPORT (EMT handoff format, assistive draft)",
+    `Generated: ${formatDateTime(generatedAt)}`,
+    "",
+    `S: ${subjective}`,
+    `O: ${objective}`,
+    `A: ${assessment.label}. Acuity=${assessment.acuity}. Rationale: ${assessment.rationale}.`,
+    `P: ${plan}`,
+    "",
+    "Safety note: This auto-generated report is assistive and does not replace clinical judgment.",
+  ].join("\n");
+};
+
+const mergeQuestionnaireNotesWithSoap = (
+  manualNotes: string | undefined,
+  soapReport: string,
+): string => {
+  const manual = manualNotes?.trim();
+  const combined = [
+    manual ? `BYSTANDER NOTES\n${manual}` : "BYSTANDER NOTES\nNone provided.",
+    "AUTOGENERATED SOAP REPORT",
+    soapReport,
+  ].join("\n\n");
+  return combined.slice(0, 8_000);
+};
+
 export const App = () => {
   const [questionnaire, setQuestionnaire] = useState(defaultDispatchQuestionnaire);
   const [latestDispatchRequest, setLatestDispatchRequest] = useState<DispatchRequest | null>(null);
@@ -81,6 +244,11 @@ export const App = () => {
 
   const liveSummaryEndpoint = useMemo(() => toApiUrl("/api/cv/live-summary"), []);
   const dispatchRequestsEndpoint = useMemo(() => toApiUrl("/api/dispatch/requests"), []);
+  const effectiveLocation = liveSummary?.location ?? browserLocation;
+  const soapReportPreview = useMemo(
+    () => buildSoapReportText(questionnaire, liveSummary, effectiveLocation),
+    [questionnaire, liveSummary, effectiveLocation],
+  );
 
   const refreshLiveSummary = async () => {
     try {
@@ -195,9 +363,13 @@ export const App = () => {
           "No location is attached to the live stream. Add location args in run_webcam.py or capture browser geolocation.",
         );
       }
+      const questionnaireWithSoap: CreateDispatchRequest["questionnaire"] = {
+        ...questionnaire,
+        notes: mergeQuestionnaireNotesWithSoap(questionnaire.notes, soapReportPreview),
+      };
 
       const payload: CreateDispatchRequest = {
-        questionnaire,
+        questionnaire: questionnaireWithSoap,
         location,
         personDownSignal: liveSummary.personDownSignal,
         emergencyCallRequested: true,
@@ -424,6 +596,14 @@ export const App = () => {
           />
         </label>
 
+        <div className="soap-card">
+          <h3>Auto-Generated SOAP Report</h3>
+          <p className="helper-text">
+            Combines live CV summary + questionnaire inputs into an EMT handoff-style SOAP draft.
+          </p>
+          <pre className="soap-pre">{soapReportPreview}</pre>
+        </div>
+
         <div className="actions-row">
           <button
             type="button"
@@ -516,7 +696,12 @@ export const App = () => {
                 <p className="meta-line">
                   CV signal: {request.personDownSignal.status} ({request.personDownSignal.confidence.toFixed(2)})
                 </p>
-                {request.questionnaire.notes ? <p className="notes">Notes: {request.questionnaire.notes}</p> : null}
+                {request.questionnaire.notes ? (
+                  <div className="notes-block">
+                    <p className="meta-line">Questionnaire + SOAP:</p>
+                    <pre className="soap-pre compact">{request.questionnaire.notes}</pre>
+                  </div>
+                ) : null}
                 {request.dispatchNotes ? <p className="notes">Context: {request.dispatchNotes}</p> : null}
 
                 {request.assignment ? (

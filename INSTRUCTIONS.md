@@ -534,3 +534,5 @@ Implementation constraints for this flow:
 - CV classification remains assistive; user confirmation is required before critical transitions.
 - Language must remain non-diagnostic ("possible person-down", "suspected emergency").
 - The backend dispatch workflow is a simulation and demo environment, not production emergency dispatch integration.
+- Questionnaire UX should be explicitly separated from passive telemetry so users can clearly see when answer input is expected.
+- Webcam/XR operator view should show explicit confirmation when dispatch request handoff to dashboard succeeds or fails.

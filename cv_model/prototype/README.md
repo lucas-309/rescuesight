@@ -12,6 +12,8 @@ This is the Day 1 hackathon scaffold for CV signals using pre-trained MediaPipe 
 - Applies partial-visibility fallback for short torso occlusions.
 - Renders a hand-shaped target overlay (instead of a dot) to indicate where to perform CPR.
 - Uses confidence-based lock-on: after stable high-confidence frames, CPR target stays locked to reduce wobble.
+- Uses rescaled person-down confidence so likely person-down states trigger HITL flow more reliably.
+- Displays questionnaire in a dedicated on-screen panel and shows explicit dispatch-send confirmation.
 
 ## Setup
 

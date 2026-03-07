@@ -183,6 +183,11 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
     - `--post-url`
     - `--source-device-id`
     - optional `--location-*` metadata
+- Improved person-down + questionnaire clarity and dispatch handoff UX:
+  - rescaled person-down confidence scoring to avoid low-end capping around ~0.6
+  - separated questionnaire state presentation in webcam/operator view
+  - added explicit request-sent confirmation (including request id when returned)
+  - added web-side auto-generated SOAP report preview for EMT handoff context
 
 ## Next Planned Steps (Immediate)
 

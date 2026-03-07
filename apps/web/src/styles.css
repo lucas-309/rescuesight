@@ -239,6 +239,38 @@ textarea {
   margin-bottom: 0;
 }
 
+.soap-card {
+  margin-top: 12px;
+  border: 1px solid #d7ebe0;
+  border-radius: 10px;
+  background: #f8fcf9;
+  padding: 10px 12px;
+}
+
+.soap-card h3 {
+  margin: 0 0 6px;
+  color: #1c4f37;
+  font-size: 1rem;
+}
+
+.soap-pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  border: 1px solid #d7ebe0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+  color: #173f2d;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  font-family: "SFMono-Regular", "Consolas", "Menlo", monospace;
+}
+
+.soap-pre.compact {
+  max-height: 220px;
+  overflow: auto;
+}
+
 .safety-notice {
   border-left: 4px solid #2a7a57;
   background: #ecf9f0;
@@ -326,6 +358,10 @@ textarea {
   margin: 0 0 6px;
   font-size: 0.92rem;
   color: #244d39;
+}
+
+.notes-block {
+  margin: 8px 0;
 }
 
 .triage-line {

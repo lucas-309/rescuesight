@@ -72,6 +72,7 @@ Then start API with `npm run dev:api` and submit `cvSignal` with XR triage paylo
 - CV person-down intake endpoint (`POST /api/cv/person-down`) with confidence-based questionnaire gating
 - Live CV summary pipeline (`run_webcam.py -> POST /api/cv/live-signal -> GET /api/cv/live-summary`) used by frontend
 - Human-in-the-loop questionnaire capture for pulse/breathing/responsiveness and scene notes
+- Auto-generated SOAP-style EMT handoff draft in web UI, merged into dispatch questionnaire notes
 - Backend emergency escalation flow (`POST /api/dispatch/requests`) that simulates 911-style escalation without calling 911
 - Pseudo-hospital dispatch dashboard queue:
   - list/filter requests by status
@@ -79,6 +80,11 @@ Then start API with `npm run dev:api` and submit `cvSignal` with XR triage paylo
   - resolve requests after handoff
 - Location capture for escalation payloads (label + lat/long + indoor descriptor)
 - Existing triage, incident timeline, XR overlay, and CV checkpoint APIs remain available for integration
+
+Webcam UX highlights:
+- person-down confidence rescaled so likely person-down states are easier to trigger
+- questionnaire appears as a dedicated, clearly active panel when initiated
+- explicit on-screen confirmation when a request is successfully sent to dashboard
 
 ## API Endpoints
 
