@@ -19,6 +19,12 @@ cd cv_model/prototype
 ./bootstrap.sh
 ```
 
+`bootstrap.sh` now does all of this in one command:
+- creates/uses `.venv`
+- activates it
+- installs requirements
+- runs `run_webcam.py`
+
 Equivalent manual setup:
 
 ```bash
@@ -28,6 +34,26 @@ pip install -r requirements.txt
 ```
 
 ## Run
+
+Default (through bootstrap):
+
+```bash
+./bootstrap.sh
+```
+
+Pass webcam flags through bootstrap:
+
+```bash
+./bootstrap.sh -- --print-json --camera-index 0
+```
+
+Run tests before starting webcam:
+
+```bash
+./bootstrap.sh --run-tests
+```
+
+Direct run (inside activated venv):
 
 ```bash
 python run_webcam.py --print-json
@@ -54,7 +80,7 @@ python -m unittest test_cv_signals.py
 Or through bootstrap script:
 
 ```bash
-./bootstrap.sh --skip-install
+./bootstrap.sh --run-tests -- --print-json
 ```
 
 ## Notes
