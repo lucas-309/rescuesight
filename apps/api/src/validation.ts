@@ -347,7 +347,7 @@ const isValidVictimSnapshot = (value: unknown): value is VictimSnapshot => {
 
   if (
     typeof value.imageDataUrl !== "string" ||
-    value.imageDataUrl.length < 32 ||
+    value.imageDataUrl.length < 24 ||
     value.imageDataUrl.length > 6_000_000 ||
     !IMAGE_DATA_URL_PATTERN.test(value.imageDataUrl)
   ) {
