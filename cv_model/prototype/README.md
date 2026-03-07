@@ -131,9 +131,16 @@ Optional flags:
 Controls:
 
 - `q` quit
-- `h` start questionnaire manually
+- `h` start questionnaire
 - `y` / `n` answer questionnaire prompts
 - `x` reset questionnaire session
+
+HITL trigger behavior:
+
+- Auto trigger is considered ready only when `bodyPosture=lying` with `postureConfidence > 0.60` and `eyesClosedConfidence > 0.80`.
+- When trigger is ready, overlay prompts: "Press H to start questionnaire now."
+- If you press `h` without trigger readiness, overlay asks for confirmation (`y` to proceed, `n` to cancel).
+- On trigger readiness, the webcam captures a victim snapshot and includes it in the dispatch request payload as `victimSnapshot`, so the dashboard can display the scene image.
 
 ## Quick tests
 

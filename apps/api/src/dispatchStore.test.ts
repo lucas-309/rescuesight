@@ -37,6 +37,12 @@ test("InMemoryDispatchStore creates and dispatches request", () => {
       confidence: 0.91,
       source: "cv",
     },
+    victimSnapshot: {
+      imageDataUrl: "data:image/jpeg;base64,ZmFrZQ==",
+      capturedAtIso: "2026-03-07T00:00:00Z",
+      frameTimestampMs: 1731000000,
+      triggerReason: "lying>0.60 && eyesClosed>0.80",
+    },
     questionnaire: {
       responsiveness: "unresponsive",
       breathing: "abnormal_or_absent",
@@ -48,6 +54,8 @@ test("InMemoryDispatchStore creates and dispatches request", () => {
 
   assert.equal(request.priority, "critical");
   assert.equal(request.status, "pending_review");
+  assert.equal(request.victimSnapshot?.imageDataUrl, "data:image/jpeg;base64,ZmFrZQ==");
+  assert.equal(request.victimSnapshot?.triggerReason, "lying>0.60 && eyesClosed>0.80");
 
   const updated = store.updateDispatchRequest(request.id, {
     assignment: {

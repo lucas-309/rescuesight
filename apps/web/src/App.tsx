@@ -626,6 +626,16 @@ export const App = () => {
             <p>
               Status: <strong>{statusLabelMap[latestDispatchRequest.status]}</strong>
             </p>
+            {latestDispatchRequest.victimSnapshot?.imageDataUrl ? (
+              <div className="victim-image-block">
+                <p className="meta-line">Victim snapshot</p>
+                <img
+                  className="victim-image"
+                  src={latestDispatchRequest.victimSnapshot.imageDataUrl}
+                  alt={`Victim snapshot for request ${latestDispatchRequest.id}`}
+                />
+              </div>
+            ) : null}
             <p className="safety-notice">{latestDispatchRequest.safetyNotice}</p>
           </div>
         ) : null}
@@ -696,6 +706,20 @@ export const App = () => {
                 <p className="meta-line">
                   CV signal: {request.personDownSignal.status} ({request.personDownSignal.confidence.toFixed(2)})
                 </p>
+                {request.victimSnapshot?.imageDataUrl ? (
+                  <div className="victim-image-block">
+                    <p className="meta-line">Victim snapshot</p>
+                    <img
+                      className="victim-image"
+                      src={request.victimSnapshot.imageDataUrl}
+                      alt={`Victim snapshot for request ${request.id}`}
+                      loading="lazy"
+                    />
+                    {request.victimSnapshot.triggerReason ? (
+                      <p className="meta-line">Trigger: {request.victimSnapshot.triggerReason}</p>
+                    ) : null}
+                  </div>
+                ) : null}
                 {request.questionnaire.notes ? (
                   <div className="notes-block">
                     <p className="meta-line">Questionnaire + SOAP:</p>
