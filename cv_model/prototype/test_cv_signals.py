@@ -5,8 +5,11 @@ import unittest
 from cv_signals import (
     BpmEstimator,
     CprTargetStabilizer,
+    TemporalConfidenceSmoother,
     classify_hand_placement,
+    estimate_body_posture,
     estimate_cpr_target,
+    estimate_eyes_closed_confidence,
 )
 
 
@@ -15,6 +18,18 @@ class _Lm:
         self.x = x
         self.y = y
         self.visibility = visibility
+        self.z = 0.0
+
+
+class _Blend:
+    def __init__(self, category_name: str, score: float) -> None:
+        self.category_name = category_name
+        self.score = score
+
+
+class _FaceResult:
+    def __init__(self, blendshapes: list[list[_Blend]]) -> None:
+        self.face_blendshapes = blendshapes
 
 
 def _pose_with_centered_torso() -> list[_Lm]:
@@ -23,6 +38,19 @@ def _pose_with_centered_torso() -> list[_Lm]:
     landmarks[12] = _Lm(0.58, 0.34, 0.98)  # right shoulder
     landmarks[23] = _Lm(0.44, 0.66, 0.97)  # left hip
     landmarks[24] = _Lm(0.56, 0.66, 0.97)  # right hip
+    return landmarks
+
+
+def _pose_lying_horizontal() -> list[_Lm]:
+    landmarks = [_Lm(0.5, 0.5, 0.0) for _ in range(33)]
+    landmarks[11] = _Lm(0.32, 0.52, 0.95)  # left shoulder
+    landmarks[12] = _Lm(0.44, 0.52, 0.95)  # right shoulder
+    landmarks[23] = _Lm(0.58, 0.54, 0.95)  # left hip
+    landmarks[24] = _Lm(0.70, 0.54, 0.95)  # right hip
+    landmarks[25] = _Lm(0.76, 0.56, 0.90)  # left knee
+    landmarks[26] = _Lm(0.82, 0.56, 0.90)  # right knee
+    landmarks[27] = _Lm(0.88, 0.57, 0.88)  # left ankle
+    landmarks[28] = _Lm(0.94, 0.57, 0.88)  # right ankle
     return landmarks
 
 
@@ -159,6 +187,47 @@ class TestCvSignals(unittest.TestCase):
         unlocked = stabilizer.update(None, 0.0)
         self.assertFalse(unlocked.isLocked)
         self.assertIsNone(unlocked.target)
+
+    def test_temporal_confidence_smoother_dampens_single_frame_drop(self) -> None:
+        smoother = TemporalConfidenceSmoother(rise_alpha=0.5, fall_alpha=0.2)
+        self.assertAlmostEqual(smoother.update(0.9), 0.9, places=3)
+        dropped = smoother.update(0.1)
+        self.assertGreater(dropped, 0.5)
+        dropped_again = smoother.update(0.1)
+        self.assertGreater(dropped_again, 0.4)
+
+    def test_estimate_body_posture_detects_lying_pose(self) -> None:
+        posture, confidence, torso_incline_deg = estimate_body_posture(_pose_lying_horizontal())
+        self.assertEqual(posture, "lying")
+        self.assertGreater(confidence, 0.45)
+        self.assertLess(torso_incline_deg, 25.0)
+
+    def test_estimate_eyes_closed_confidence_responds_to_blink_and_eye_wide(self) -> None:
+        closed_result = _FaceResult(
+            [[
+                _Blend("eyeBlinkLeft", 0.92),
+                _Blend("eyeBlinkRight", 0.88),
+                _Blend("eyeSquintLeft", 0.78),
+                _Blend("eyeSquintRight", 0.82),
+                _Blend("eyeWideLeft", 0.08),
+                _Blend("eyeWideRight", 0.07),
+            ]]
+        )
+        open_result = _FaceResult(
+            [[
+                _Blend("eyeBlinkLeft", 0.12),
+                _Blend("eyeBlinkRight", 0.10),
+                _Blend("eyeSquintLeft", 0.10),
+                _Blend("eyeSquintRight", 0.08),
+                _Blend("eyeWideLeft", 0.86),
+                _Blend("eyeWideRight", 0.84),
+            ]]
+        )
+
+        closed_conf = estimate_eyes_closed_confidence(closed_result)
+        open_conf = estimate_eyes_closed_confidence(open_result)
+        self.assertGreater(closed_conf, 0.70)
+        self.assertLess(open_conf, 0.30)
 
 
 if __name__ == "__main__":

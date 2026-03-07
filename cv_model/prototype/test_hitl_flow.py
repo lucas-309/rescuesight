@@ -86,6 +86,28 @@ class TestHitlFlow(unittest.TestCase):
             )
         )
 
+    def test_session_keeps_auto_prompt_latched_on_brief_trigger_drop(self) -> None:
+        session = HitlQuestionnaireSession(cooldown_ms=0)
+        self.assertTrue(
+            session.set_auto_prompt_ready(
+                trigger_ready=True,
+                timestamp_ms=1_000,
+                status="trigger",
+                victim_snapshot={"imageDataUrl": "data:image/jpeg;base64,ZmFrZQ=="},
+            )
+        )
+        self.assertTrue(session.auto_prompt_ready)
+        self.assertIsNotNone(session.pending_victim_snapshot)
+        self.assertFalse(
+            session.set_auto_prompt_ready(
+                trigger_ready=False,
+                timestamp_ms=1_050,
+                status="trigger dropped",
+            )
+        )
+        self.assertTrue(session.auto_prompt_ready)
+        self.assertIsNotNone(session.pending_victim_snapshot)
+
     def test_session_questionnaire_completion(self) -> None:
         session = HitlQuestionnaireSession(cooldown_ms=0)
         session.set_auto_prompt_ready(

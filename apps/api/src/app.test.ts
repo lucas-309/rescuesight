@@ -131,6 +131,12 @@ describe("RescueSight API routes", () => {
           eyesClosedConfidence: 0.63,
           torsoInclineDeg: 20.0,
         },
+        victimSnapshot: {
+          imageDataUrl: "data:image/jpeg;base64,ZmFrZQ==",
+          capturedAtIso: "2026-03-07T00:00:00Z",
+          frameTimestampMs: 1731001200,
+          triggerReason: "live_cv_person_down",
+        },
         sourceDeviceId: "cam-quest-01",
         location: {
           label: "Library atrium",
@@ -141,10 +147,15 @@ describe("RescueSight API routes", () => {
     });
     assert.equal(ingestResponse.status, 202);
     const ingestBody = (await ingestResponse.json()) as {
-      summary: { personDownSignal: { status: string; confidence: number }; summaryText: string };
+      summary: {
+        personDownSignal: { status: string; confidence: number };
+        summaryText: string;
+        victimSnapshot?: { imageDataUrl: string };
+      };
     };
     assert.ok(ingestBody.summary.personDownSignal.confidence >= 0.6);
     assert.equal(ingestBody.summary.personDownSignal.status, "person_down");
+    assert.equal(ingestBody.summary.victimSnapshot?.imageDataUrl, "data:image/jpeg;base64,ZmFrZQ==");
     assert.match(ingestBody.summary.summaryText, /Person-down:/);
 
     const summaryResponse = await fetch(`${baseUrl}/api/cv/live-summary`);
@@ -154,11 +165,13 @@ describe("RescueSight API routes", () => {
         sourceDeviceId: string;
         location?: { label: string };
         signal: { compressionRateBpm: number };
+        victimSnapshot?: { imageDataUrl: string };
       };
     };
     assert.equal(summaryBody.summary.sourceDeviceId, "cam-quest-01");
     assert.equal(summaryBody.summary.location?.label, "Library atrium");
     assert.equal(summaryBody.summary.signal.compressionRateBpm, 106);
+    assert.equal(summaryBody.summary.victimSnapshot?.imageDataUrl, "data:image/jpeg;base64,ZmFrZQ==");
   });
 
   test("POST /api/triage/evaluate returns pathway for valid payload", async () => {

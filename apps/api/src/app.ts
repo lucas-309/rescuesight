@@ -57,22 +57,29 @@ const clamp = (value: number, min: number, max: number): number =>
 const inferPersonDownSignalFromLiveCv = (
   signal: CvLiveSignalIngestRequest["signal"],
 ): PersonDownSignal => {
-  let confidence = 0;
+  let confidence = 0.05;
 
   const posture = signal.bodyPosture ?? "unknown";
   const postureConfidence = clamp(signal.postureConfidence ?? 0, 0, 1);
   const eyesClosedConfidence = clamp(signal.eyesClosedConfidence ?? 0, 0, 1);
+  const hasCprPattern =
+    signal.handPlacementStatus !== "unknown" &&
+    clamp(signal.placementConfidence, 0, 1) >= 0.55 &&
+    signal.compressionRateBpm >= 85 &&
+    signal.compressionRhythmQuality !== "unknown";
 
   if (posture === "lying") {
-    confidence += 0.12 + 0.34 * postureConfidence;
+    confidence += 0.20 + 0.42 * postureConfidence;
   } else if (posture === "sitting") {
-    confidence -= 0.32 * Math.max(0.3, postureConfidence);
+    confidence -= 0.20 * Math.max(0.3, postureConfidence);
   } else if (posture === "upright") {
-    confidence -= 0.45 * Math.max(0.3, postureConfidence);
+    confidence -= 0.28 * Math.max(0.3, postureConfidence);
   }
 
-  if (eyesClosedConfidence >= 0.25) {
-    confidence += 0.18 * eyesClosedConfidence;
+  if (eyesClosedConfidence >= 0.4) {
+    confidence += 0.16 * eyesClosedConfidence;
+  } else if (eyesClosedConfidence >= 0.2) {
+    confidence += 0.06 * eyesClosedConfidence;
   }
 
   if (signal.visibility === "full") {
@@ -82,32 +89,37 @@ const inferPersonDownSignalFromLiveCv = (
   }
 
   if (signal.handPlacementStatus !== "unknown") {
-    confidence += 0.1 * clamp(signal.placementConfidence, 0, 1);
+    confidence += 0.12 * clamp(signal.placementConfidence, 0, 1);
   }
 
   if (signal.compressionRateBpm >= 85) {
-    confidence += 0.12;
+    confidence += 0.2;
   }
 
   if (signal.compressionRhythmQuality !== "unknown") {
-    confidence += 0.06;
+    confidence += 0.08;
+  }
+
+  if (hasCprPattern) {
+    confidence += 0.24;
   }
 
   if (signal.visibility === "poor") {
-    confidence = Math.min(confidence, 0.3);
+    confidence = Math.min(confidence, 0.35);
   }
 
   if (
     (posture === "upright" || posture === "sitting") &&
-    postureConfidence >= 0.55 &&
-    eyesClosedConfidence < 0.65
+    postureConfidence >= 0.75 &&
+    eyesClosedConfidence < 0.45 &&
+    !hasCprPattern
   ) {
     confidence = Math.min(confidence, 0.35);
   }
 
   const bounded = clamp(confidence, 0, 1);
   const status: PersonDownSignal["status"] =
-    bounded >= 0.6 ? "person_down" : bounded >= 0.4 ? "uncertain" : "not_person_down";
+    bounded >= 0.58 ? "person_down" : bounded >= 0.38 ? "uncertain" : "not_person_down";
 
   return {
     status,
@@ -237,10 +249,12 @@ export const buildApp = (options: BuildAppOptions = {}) => {
 
     const payload = req.body as CvLiveSignalIngestRequest;
     const personDownSignal = inferPersonDownSignalFromLiveCv(payload.signal);
+    const victimSnapshot = payload.victimSnapshot ?? latestCvLiveSummary?.victimSnapshot;
     latestCvLiveSummary = {
       updatedAtIso: new Date().toISOString(),
       signal: payload.signal,
       personDownSignal,
+      victimSnapshot,
       summaryText: buildLiveSummaryText(payload.signal, personDownSignal),
       safetyNotice:
         "Live CV summary is assistive only and must be confirmed by a human responder.",

@@ -280,6 +280,12 @@ test("isValidCvLiveSignalIngestRequest accepts valid live signal payload", () =>
         visibility: "full",
         frameTimestampMs: 1731009999,
       },
+      victimSnapshot: {
+        imageDataUrl: "data:image/jpeg;base64,ZmFrZQ==",
+        capturedAtIso: "2026-03-07T00:00:00Z",
+        frameTimestampMs: 1731009999,
+        triggerReason: "live_cv_person_down",
+      },
       sourceDeviceId: "cam-01",
       location: {
         label: "Main quad",
@@ -288,6 +294,26 @@ test("isValidCvLiveSignalIngestRequest accepts valid live signal payload", () =>
       },
     }),
     true,
+  );
+});
+
+test("isValidCvLiveSignalIngestRequest rejects invalid victim snapshot", () => {
+  assert.equal(
+    isValidCvLiveSignalIngestRequest({
+      signal: {
+        handPlacementStatus: "correct",
+        placementConfidence: 0.92,
+        compressionRateBpm: 108,
+        compressionRhythmQuality: "good",
+        visibility: "full",
+        frameTimestampMs: 1731009999,
+      },
+      victimSnapshot: {
+        imageDataUrl: "https://example.com/image.jpg",
+      },
+      sourceDeviceId: "cam-01",
+    }),
+    false,
   );
 });
 

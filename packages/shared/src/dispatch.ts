@@ -101,6 +101,7 @@ export interface PersonDownEvent {
 
 export interface CvLiveSignalIngestRequest {
   signal: XrCvSignalInput;
+  victimSnapshot?: VictimSnapshot;
   location?: DispatchLocation;
   sourceDeviceId?: string;
 }
@@ -109,6 +110,7 @@ export interface CvLiveSummary {
   updatedAtIso: string;
   signal: XrCvSignalInput;
   personDownSignal: PersonDownSignal;
+  victimSnapshot?: VictimSnapshot;
   summaryText: string;
   safetyNotice: string;
   location?: DispatchLocation;

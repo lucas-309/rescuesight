@@ -162,6 +162,13 @@ const buildSoapReportText = (
     objectiveLines.push(
       `Person-down=${liveSummary.personDownSignal.status} (${liveSummary.personDownSignal.confidence.toFixed(2)}).`,
     );
+    if (liveSummary.victimSnapshot?.capturedAtIso) {
+      objectiveLines.push(
+        `Victim snapshot captured=${formatDateTime(liveSummary.victimSnapshot.capturedAtIso)}.`,
+      );
+    } else if (liveSummary.victimSnapshot?.frameTimestampMs) {
+      objectiveLines.push(`Victim snapshot frame ts=${liveSummary.victimSnapshot.frameTimestampMs}.`);
+    }
     objectiveLines.push(
       `Compression=${liveSummary.signal.compressionRateBpm} BPM (${liveSummary.signal.compressionRhythmQuality}), placement=${liveSummary.signal.handPlacementStatus} (${liveSummary.signal.placementConfidence.toFixed(2)}), visibility=${liveSummary.signal.visibility}.`,
     );
@@ -372,6 +379,7 @@ export const App = () => {
         questionnaire: questionnaireWithSoap,
         location,
         personDownSignal: liveSummary.personDownSignal,
+        victimSnapshot: liveSummary.victimSnapshot,
         emergencyCallRequested: true,
       };
 
@@ -472,6 +480,19 @@ export const App = () => {
             </div>
 
             <p className="summary-line">{liveSummary.summaryText}</p>
+            {liveSummary.victimSnapshot?.imageDataUrl ? (
+              <div className="victim-image-block">
+                <p className="meta-line">Latest victim snapshot from live feed</p>
+                <img
+                  className="victim-image"
+                  src={liveSummary.victimSnapshot.imageDataUrl}
+                  alt="Latest victim snapshot from live CV stream"
+                />
+                {liveSummary.victimSnapshot.triggerReason ? (
+                  <p className="meta-line">Reason: {liveSummary.victimSnapshot.triggerReason}</p>
+                ) : null}
+              </div>
+            ) : null}
             <p className="safety-notice">{liveSummary.safetyNotice}</p>
           </div>
         ) : null}

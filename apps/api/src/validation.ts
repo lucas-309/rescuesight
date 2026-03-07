@@ -447,6 +447,10 @@ export const isValidCvLiveSignalIngestRequest = (
     return false;
   }
 
+  if (value.victimSnapshot !== undefined && !isValidVictimSnapshot(value.victimSnapshot)) {
+    return false;
+  }
+
   if (value.sourceDeviceId !== undefined && typeof value.sourceDeviceId !== "string") {
     return false;
   }
@@ -745,6 +749,7 @@ export const createPersonDownEventPayloadShape = {
 
 export const cvLiveSignalIngestPayloadShape = {
   signal: xrTriageHookPayloadShape.cvSignal,
+  victimSnapshot: "optional: dispatch victim snapshot payload",
   location: dispatchLocationPayloadShape,
   sourceDeviceId: "string (optional)",
 };
