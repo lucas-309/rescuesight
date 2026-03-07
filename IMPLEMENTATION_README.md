@@ -9,6 +9,9 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
 - CPR assistance workflow
 - Stroke screening prompts
 - Escalation prompts (call EMS, retrieve AED)
+- CV person-down intake with confidence gating
+- Human-in-the-loop questionnaire before escalation
+- Backend dispatch queue and pseudo-hospital EMT assignment dashboard
 - Future integration points for XR overlays, CV, and RAG assistance
 
 ## Product And Safety Constraints (from `INSTRUCTIONS.md`)
@@ -60,6 +63,7 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
 - [x] Add event timeline capture (onset time, actions taken)
 - [x] Add AED retrieval prompt flow
 - [x] Add emergency handoff summary card for responders
+- [x] Add person-down to questionnaire to dispatch queue vertical slice
 
 ### Phase 3: AI/RAG + Tooling
 - [ ] Add constrained emergency knowledge base retrieval
@@ -153,6 +157,25 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
     - critical action updates (`cprStarted`) blocked until required checkpoints are acknowledged
   - added C# client scaffold for CV stub API:
     - `docs/unity/RescueSightCvHooksClient.cs`
+- Added new person-down + dispatch domain models in `packages/shared/src/dispatch.ts`.
+- Added API dispatch store and endpoints:
+  - `POST /api/cv/person-down`
+  - `GET /api/cv/person-down-events`
+  - `POST /api/dispatch/requests`
+  - `GET /api/dispatch/requests`
+  - `GET /api/dispatch/requests/:requestId`
+  - `PATCH /api/dispatch/requests/:requestId`
+- Added deterministic dispatch priority rules based on questionnaire + person-down confidence.
+- Reworked web app around the new flow:
+  - CV person-down intake form with confidence and location capture
+  - human questionnaire form for pulse/breathing/responsiveness and scene notes
+  - backend escalation submit action (simulated 911 handoff to backend queue)
+  - pseudo-hospital dashboard with status filtering, EMT assignment, and resolve actions
+- Expanded tests:
+  - new dispatch store unit tests
+  - validation tests for person-down and dispatch payloads
+  - API integration tests covering person-down intake and dispatch lifecycle
+- Updated `README.md` and `INSTRUCTIONS.md` to reflect the new plan and constraints.
 
 ## Next Planned Steps (Immediate)
 

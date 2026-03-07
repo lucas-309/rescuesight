@@ -1,13 +1,19 @@
 import type {
   AedStatus,
+  CreateDispatchRequest,
+  CreatePersonDownEventRequest,
   CvCompressionRhythmQuality,
   CvHandPlacementStatus,
   CvVisibility,
+  DispatchRequestStatus,
+  EmergencyQuestionnaire,
   IncidentActionKey,
   IncidentStatus,
   IncidentTimelineInput,
+  PersonDownSignal,
   PersistIncidentRequest,
   TriageAnswers,
+  UpdateDispatchRequest,
   UpdateIncidentRequest,
   XrDeviceContext,
   XrIncidentActionUpdateRequest,
@@ -57,11 +63,43 @@ const CV_RHYTHM_VALUES: CvCompressionRhythmQuality[] = [
   "unknown",
 ];
 const CV_VISIBILITY_VALUES: CvVisibility[] = ["full", "partial", "poor"];
+const PERSON_DOWN_SIGNAL_STATUS_VALUES: PersonDownSignal["status"][] = [
+  "person_down",
+  "not_person_down",
+  "uncertain",
+];
+const PERSON_DOWN_SIGNAL_SOURCE_VALUES: PersonDownSignal["source"][] = [
+  "cv",
+  "manual",
+  "api",
+];
+const QUESTIONNAIRE_RESPONSIVENESS_VALUES: EmergencyQuestionnaire["responsiveness"][] = [
+  "responsive",
+  "unresponsive",
+  "unknown",
+];
+const QUESTIONNAIRE_BREATHING_VALUES: EmergencyQuestionnaire["breathing"][] = [
+  "normal",
+  "abnormal_or_absent",
+  "unknown",
+];
+const QUESTIONNAIRE_PULSE_VALUES: EmergencyQuestionnaire["pulse"][] = [
+  "present",
+  "absent",
+  "unknown",
+];
+const DISPATCH_STATUS_VALUES: DispatchRequestStatus[] = [
+  "pending_review",
+  "dispatched",
+  "resolved",
+];
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
 export const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
 
 export const isValidAnswers = (value: unknown): value is TriageAnswers => {
   if (!isObject(value)) {
@@ -209,6 +247,198 @@ const isValidXrCvSignal = (
 
   if (typeof value.frameTimestampMs !== "number") {
     return false;
+  }
+
+  return true;
+};
+
+const isValidDispatchStatus = (value: unknown): value is DispatchRequestStatus =>
+  typeof value === "string" && DISPATCH_STATUS_VALUES.includes(value as DispatchRequestStatus);
+
+const isValidPersonDownSignal = (value: unknown): value is PersonDownSignal => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (
+    typeof value.status !== "string" ||
+    !PERSON_DOWN_SIGNAL_STATUS_VALUES.includes(value.status as PersonDownSignal["status"])
+  ) {
+    return false;
+  }
+
+  if (!isFiniteNumber(value.confidence)) {
+    return false;
+  }
+
+  if (
+    typeof value.source !== "string" ||
+    !PERSON_DOWN_SIGNAL_SOURCE_VALUES.includes(value.source as PersonDownSignal["source"])
+  ) {
+    return false;
+  }
+
+  if (value.frameTimestampMs !== undefined && !isFiniteNumber(value.frameTimestampMs)) {
+    return false;
+  }
+
+  if (value.observedAtIso !== undefined && typeof value.observedAtIso !== "string") {
+    return false;
+  }
+
+  return true;
+};
+
+const isValidDispatchLocation = (value: unknown): value is CreateDispatchRequest["location"] => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (typeof value.label !== "string") {
+    return false;
+  }
+
+  if (!isFiniteNumber(value.latitude) || !isFiniteNumber(value.longitude)) {
+    return false;
+  }
+
+  if (value.accuracyMeters !== undefined && !isFiniteNumber(value.accuracyMeters)) {
+    return false;
+  }
+
+  if (value.indoorDescriptor !== undefined && typeof value.indoorDescriptor !== "string") {
+    return false;
+  }
+
+  return true;
+};
+
+const isValidEmergencyQuestionnaire = (
+  value: unknown,
+): value is CreateDispatchRequest["questionnaire"] => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (
+    typeof value.responsiveness !== "string" ||
+    !QUESTIONNAIRE_RESPONSIVENESS_VALUES.includes(
+      value.responsiveness as EmergencyQuestionnaire["responsiveness"],
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    typeof value.breathing !== "string" ||
+    !QUESTIONNAIRE_BREATHING_VALUES.includes(value.breathing as EmergencyQuestionnaire["breathing"])
+  ) {
+    return false;
+  }
+
+  if (
+    typeof value.pulse !== "string" ||
+    !QUESTIONNAIRE_PULSE_VALUES.includes(value.pulse as EmergencyQuestionnaire["pulse"])
+  ) {
+    return false;
+  }
+
+  if (!isBoolean(value.severeBleeding) || !isBoolean(value.majorTrauma)) {
+    return false;
+  }
+
+  if (value.notes !== undefined && typeof value.notes !== "string") {
+    return false;
+  }
+
+  return true;
+};
+
+export const isValidCreatePersonDownEventRequest = (
+  value: unknown,
+): value is CreatePersonDownEventRequest => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (!isValidPersonDownSignal(value.signal)) {
+    return false;
+  }
+
+  if (value.location !== undefined && !isValidDispatchLocation(value.location)) {
+    return false;
+  }
+
+  if (value.sourceDeviceId !== undefined && typeof value.sourceDeviceId !== "string") {
+    return false;
+  }
+
+  return true;
+};
+
+export const isValidCreateDispatchRequest = (
+  value: unknown,
+): value is CreateDispatchRequest => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (!isValidEmergencyQuestionnaire(value.questionnaire)) {
+    return false;
+  }
+
+  if (!isValidDispatchLocation(value.location)) {
+    return false;
+  }
+
+  if (!isValidPersonDownSignal(value.personDownSignal)) {
+    return false;
+  }
+
+  if (
+    value.emergencyCallRequested !== undefined &&
+    !isBoolean(value.emergencyCallRequested)
+  ) {
+    return false;
+  }
+
+  return true;
+};
+
+export const isValidUpdateDispatchRequest = (
+  value: unknown,
+): value is UpdateDispatchRequest => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  const hasKnownField =
+    value.status !== undefined || value.assignment !== undefined || value.dispatchNotes !== undefined;
+  if (!hasKnownField) {
+    return false;
+  }
+
+  if (value.status !== undefined && !isValidDispatchStatus(value.status)) {
+    return false;
+  }
+
+  if (value.dispatchNotes !== undefined && typeof value.dispatchNotes !== "string") {
+    return false;
+  }
+
+  if (value.assignment !== undefined) {
+    if (!isObject(value.assignment)) {
+      return false;
+    }
+    if (typeof value.assignment.unitId !== "string") {
+      return false;
+    }
+    if (typeof value.assignment.dispatcher !== "string") {
+      return false;
+    }
+    if (!isFiniteNumber(value.assignment.etaMinutes)) {
+      return false;
+    }
   }
 
   return true;
@@ -403,4 +633,52 @@ export const xrIncidentActionUpdatePayloadShape = {
   completed: "boolean",
   aedStatus: "unknown | not_available | retrieval_in_progress | on_scene (optional)",
   responderNotes: "string (optional)",
+};
+
+export const dispatchLocationPayloadShape = {
+  label: "string",
+  latitude: "number",
+  longitude: "number",
+  accuracyMeters: "number (optional)",
+  indoorDescriptor: "string (optional)",
+};
+
+export const personDownSignalPayloadShape = {
+  status: "person_down | not_person_down | uncertain",
+  confidence: "number",
+  source: "cv | manual | api",
+  frameTimestampMs: "number (optional)",
+  observedAtIso: "string (optional)",
+};
+
+export const createPersonDownEventPayloadShape = {
+  signal: personDownSignalPayloadShape,
+  location: dispatchLocationPayloadShape,
+  sourceDeviceId: "string (optional)",
+};
+
+export const dispatchQuestionnairePayloadShape = {
+  responsiveness: "responsive | unresponsive | unknown",
+  breathing: "normal | abnormal_or_absent | unknown",
+  pulse: "present | absent | unknown",
+  severeBleeding: "boolean",
+  majorTrauma: "boolean",
+  notes: "string (optional)",
+};
+
+export const createDispatchRequestPayloadShape = {
+  questionnaire: dispatchQuestionnairePayloadShape,
+  location: dispatchLocationPayloadShape,
+  personDownSignal: personDownSignalPayloadShape,
+  emergencyCallRequested: "boolean (optional)",
+};
+
+export const updateDispatchRequestPayloadShape = {
+  status: "pending_review | dispatched | resolved (optional)",
+  assignment: {
+    unitId: "string",
+    dispatcher: "string",
+    etaMinutes: "number",
+  },
+  dispatchNotes: "string (optional)",
 };

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isValidCreateDispatchRequest,
+  isValidCreatePersonDownEventRequest,
   isValidAnswers,
   isValidPersistIncidentRequest,
+  isValidUpdateDispatchRequest,
   isValidUpdateIncidentRequest,
   isValidXrIncidentActionUpdateRequest,
   isValidXrTriageHookRequest,
@@ -158,6 +161,62 @@ test("isValidXrIncidentActionUpdateRequest rejects unknown action key", () => {
     isValidXrIncidentActionUpdateRequest({
       actionKey: "startCompression",
       completed: true,
+    }),
+    false,
+  );
+});
+
+test("isValidCreatePersonDownEventRequest accepts valid CV event payload", () => {
+  assert.equal(
+    isValidCreatePersonDownEventRequest({
+      signal: {
+        status: "person_down",
+        confidence: 0.8,
+        source: "cv",
+        frameTimestampMs: 1731000000,
+      },
+      location: {
+        label: "North lot",
+        latitude: 37.42,
+        longitude: -122.08,
+      },
+      sourceDeviceId: "cam-01",
+    }),
+    true,
+  );
+});
+
+test("isValidCreateDispatchRequest accepts valid questionnaire + location payload", () => {
+  assert.equal(
+    isValidCreateDispatchRequest({
+      questionnaire: {
+        responsiveness: "unresponsive",
+        breathing: "abnormal_or_absent",
+        pulse: "unknown",
+        severeBleeding: false,
+        majorTrauma: false,
+      },
+      location: {
+        label: "Main lobby",
+        latitude: 40.758,
+        longitude: -73.9855,
+        indoorDescriptor: "Ground floor",
+      },
+      personDownSignal: {
+        status: "person_down",
+        confidence: 0.74,
+        source: "cv",
+      },
+      emergencyCallRequested: true,
+    }),
+    true,
+  );
+});
+
+test("isValidUpdateDispatchRequest rejects unknown status", () => {
+  assert.equal(
+    isValidUpdateDispatchRequest({
+      status: "queued",
     }),
     false,
   );

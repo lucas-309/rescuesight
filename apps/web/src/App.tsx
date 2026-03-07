@@ -1,613 +1,504 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
-  AedStatus,
-  HeartRelatedSigns,
-  IncidentActionKey,
-  IncidentTimeline,
-  StrokeSigns,
-  TriageAnswers,
-  TriageEvaluationResponse,
+  CreateDispatchRequest,
+  CreatePersonDownEventRequest,
+  DispatchRequest,
+  DispatchRequestStatus,
+  PersonDownEvent,
 } from "@rescuesight/shared";
-import { CprMetronome } from "./CprMetronome";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
-interface ScenarioPreset {
-  id: string;
-  title: string;
-  description: string;
-  answers: TriageAnswers;
-}
-
-const defaultStrokeSigns: StrokeSigns = {
-  faceDrooping: false,
-  armWeakness: false,
-  speechDifficulty: false,
+const toApiUrl = (path: string): string => {
+  const base = API_BASE_URL.endsWith("/") ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+  return `${base}${path}`;
 };
 
-const defaultHeartSigns: HeartRelatedSigns = {
-  chestDiscomfort: false,
-  shortnessOfBreath: false,
-  coldSweat: false,
-  nauseaOrUpperBodyDiscomfort: false,
+type AssignmentDraft = {
+  unitId: string;
+  dispatcher: string;
+  etaMinutes: string;
+  dispatchNotes: string;
 };
 
-const defaultAnswers: TriageAnswers = {
-  responsive: true,
-  breathingNormal: true,
-  strokeSigns: defaultStrokeSigns,
-  heartRelatedSigns: defaultHeartSigns,
+const defaultAssignmentDraft: AssignmentDraft = {
+  unitId: "",
+  dispatcher: "",
+  etaMinutes: "5",
+  dispatchNotes: "",
 };
 
-const actionLabelMap: Record<IncidentActionKey, string> = {
-  emsCalled: "Emergency services called",
-  cprStarted: "CPR started",
-  aedRequested: "AED retrieval requested",
-  aedArrived: "AED arrived on scene",
-  strokeOnsetRecorded: "Stroke symptom onset time recorded",
-};
-
-const actionKeys = Object.keys(actionLabelMap) as IncidentActionKey[];
-
-const aedStatusLabelMap: Record<AedStatus, string> = {
-  unknown: "Unknown",
-  not_available: "Not available nearby",
-  retrieval_in_progress: "Retrieval in progress",
-  on_scene: "AED on scene",
-};
-
-const defaultTimeline: IncidentTimeline = {
-  firstObservedAtLocal: "",
-  responderNotes: "",
-  aedStatus: "unknown",
-  actionsTaken: {
-    emsCalled: false,
-    cprStarted: false,
-    aedRequested: false,
-    aedArrived: false,
-    strokeOnsetRecorded: false,
+const defaultCvInput: CreatePersonDownEventRequest = {
+  signal: {
+    status: "person_down",
+    confidence: 0.78,
+    source: "cv",
   },
+  location: {
+    label: "",
+    latitude: 0,
+    longitude: 0,
+    indoorDescriptor: "",
+  },
+  sourceDeviceId: "quest3-kiosk-01",
 };
 
-const cloneAnswers = (answers: TriageAnswers): TriageAnswers => ({
-  responsive: answers.responsive,
-  breathingNormal: answers.breathingNormal,
-  strokeSigns: { ...answers.strokeSigns },
-  heartRelatedSigns: { ...answers.heartRelatedSigns },
-});
+const defaultDispatchQuestionnaire: CreateDispatchRequest["questionnaire"] = {
+  responsiveness: "unresponsive",
+  breathing: "abnormal_or_absent",
+  pulse: "unknown",
+  severeBleeding: false,
+  majorTrauma: false,
+  notes: "",
+};
 
-const toLocalDateTimeInput = (date: Date): string => {
-  const pad = (value: number): string => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-    date.getHours(),
-  )}:${pad(date.getMinutes())}`;
+const defaultLocationForm = {
+  label: "",
+  latitude: "",
+  longitude: "",
+  indoorDescriptor: "",
+  accuracyMeters: "",
+};
+
+const statusOrder: DispatchRequestStatus[] = ["pending_review", "dispatched", "resolved"];
+
+const statusLabelMap: Record<DispatchRequestStatus, string> = {
+  pending_review: "Pending Review",
+  dispatched: "Dispatched",
+  resolved: "Resolved",
+};
+
+const priorityLabelMap: Record<DispatchRequest["priority"], string> = {
+  critical: "Critical",
+  high: "High",
 };
 
 const formatDateTime = (value: string): string => {
-  if (!value) {
-    return "Not recorded";
-  }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    return "Not recorded";
+    return value;
   }
   return parsed.toLocaleString();
 };
 
-const scenarioPresets: ScenarioPreset[] = [
-  {
-    id: "collapse",
-    title: "Collapse / Unresponsive",
-    description: "Simulates a possible cardiac arrest pathway.",
-    answers: {
-      responsive: false,
-      breathingNormal: false,
-      strokeSigns: {
-        faceDrooping: false,
-        armWeakness: false,
-        speechDifficulty: false,
-      },
-      heartRelatedSigns: {
-        chestDiscomfort: false,
-        shortnessOfBreath: false,
-        coldSweat: false,
-        nauseaOrUpperBodyDiscomfort: false,
-      },
-    },
-  },
-  {
-    id: "stroke",
-    title: "Suspected Stroke",
-    description: "Simulates FAST-positive signs with normal breathing.",
-    answers: {
-      responsive: true,
-      breathingNormal: true,
-      strokeSigns: {
-        faceDrooping: true,
-        armWeakness: true,
-        speechDifficulty: true,
-      },
-      heartRelatedSigns: {
-        chestDiscomfort: false,
-        shortnessOfBreath: false,
-        coldSweat: false,
-        nauseaOrUpperBodyDiscomfort: false,
-      },
-    },
-  },
-  {
-    id: "heart",
-    title: "Heart-Related Signs",
-    description: "Simulates a possible heart-related emergency branch.",
-    answers: {
-      responsive: true,
-      breathingNormal: true,
-      strokeSigns: {
-        faceDrooping: false,
-        armWeakness: false,
-        speechDifficulty: false,
-      },
-      heartRelatedSigns: {
-        chestDiscomfort: true,
-        shortnessOfBreath: true,
-        coldSweat: true,
-        nauseaOrUpperBodyDiscomfort: false,
-      },
-    },
-  },
-  {
-    id: "unclear",
-    title: "Unclear Emergency",
-    description: "Simulates inconclusive signs requiring escalation.",
-    answers: {
-      responsive: true,
-      breathingNormal: true,
-      strokeSigns: {
-        faceDrooping: false,
-        armWeakness: false,
-        speechDifficulty: false,
-      },
-      heartRelatedSigns: {
-        chestDiscomfort: false,
-        shortnessOfBreath: false,
-        coldSweat: false,
-        nauseaOrUpperBodyDiscomfort: false,
-      },
-    },
-  },
-];
+const parseNumberOrNull = (value: string): number | null => {
+  if (!value.trim()) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 export const App = () => {
-  const [answers, setAnswers] = useState<TriageAnswers>(defaultAnswers);
-  const [timeline, setTimeline] = useState<IncidentTimeline>(defaultTimeline);
-  const [result, setResult] = useState<TriageEvaluationResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const [savingIncident, setSavingIncident] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<string | null>(null);
-  const [savedIncidentId, setSavedIncidentId] = useState<string | null>(null);
+  const [cvInput, setCvInput] = useState<CreatePersonDownEventRequest>(defaultCvInput);
+  const [locationForm, setLocationForm] = useState(defaultLocationForm);
+  const [questionnaire, setQuestionnaire] = useState(defaultDispatchQuestionnaire);
+  const [latestCvEvent, setLatestCvEvent] = useState<PersonDownEvent | null>(null);
+  const [latestDispatchRequest, setLatestDispatchRequest] = useState<DispatchRequest | null>(null);
 
-  const evaluateEndpoint = useMemo(
-    () => `${API_BASE_URL}/api/triage/evaluate`.replace(/\/\//g, "/").replace("http:/", "http://").replace("https:/", "https://"),
-    [],
-  );
-  const incidentsEndpoint = useMemo(
-    () => `${API_BASE_URL}/api/incidents`.replace(/\/\//g, "/").replace("http:/", "http://").replace("https:/", "https://"),
-    [],
-  );
+  const [queue, setQueue] = useState<DispatchRequest[]>([]);
+  const [queueFilter, setQueueFilter] = useState<DispatchRequestStatus | "all">("all");
+  const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, AssignmentDraft>>({});
 
-  const setStrokeSign = (key: keyof StrokeSigns, value: boolean) => {
-    setAnswers((current) => ({
-      ...current,
-      strokeSigns: {
-        ...current.strokeSigns,
-        [key]: value,
-      },
-    }));
+  const [cvLoading, setCvLoading] = useState(false);
+  const [dispatchLoading, setDispatchLoading] = useState(false);
+  const [queueLoading, setQueueLoading] = useState(false);
+
+  const [cvStatus, setCvStatus] = useState<string | null>(null);
+  const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
+  const [queueStatus, setQueueStatus] = useState<string | null>(null);
+
+  const cvEventEndpoint = useMemo(() => toApiUrl("/api/cv/person-down"), []);
+  const dispatchRequestsEndpoint = useMemo(() => toApiUrl("/api/dispatch/requests"), []);
+
+  const getDraft = (requestId: string): AssignmentDraft =>
+    assignmentDrafts[requestId] ?? defaultAssignmentDraft;
+
+  const parseLocationOrThrow = (): CreateDispatchRequest["location"] => {
+    const latitude = parseNumberOrNull(locationForm.latitude);
+    const longitude = parseNumberOrNull(locationForm.longitude);
+
+    if (!locationForm.label.trim()) {
+      throw new Error("Location label is required.");
+    }
+    if (latitude === null || longitude === null) {
+      throw new Error("Latitude and longitude are required numeric values.");
+    }
+
+    const accuracyMeters = parseNumberOrNull(locationForm.accuracyMeters);
+
+    return {
+      label: locationForm.label.trim(),
+      latitude,
+      longitude,
+      indoorDescriptor: locationForm.indoorDescriptor.trim() || undefined,
+      accuracyMeters: accuracyMeters ?? undefined,
+    };
   };
 
-  const setHeartSign = (key: keyof HeartRelatedSigns, value: boolean) => {
-    setAnswers((current) => ({
-      ...current,
-      heartRelatedSigns: {
-        ...current.heartRelatedSigns,
-        [key]: value,
-      },
-    }));
-  };
-
-  const setTimelineAction = (key: IncidentActionKey, value: boolean) => {
-    setTimeline((current) => ({
-      ...current,
-      actionsTaken: {
-        ...current.actionsTaken,
-        [key]: value,
-      },
-    }));
-  };
-
-  const loadPreset = (preset: ScenarioPreset) => {
-    setAnswers(cloneAnswers(preset.answers));
-    setResult(null);
-    setError(null);
-    setCopyStatus(null);
-    setSaveStatus(null);
-    setSavedIncidentId(null);
-    setTimeline((current) => ({
-      ...current,
-      firstObservedAtLocal: current.firstObservedAtLocal || toLocalDateTimeInput(new Date()),
-    }));
-  };
-
-  const evaluate = async () => {
-    setLoading(true);
-    setError(null);
-    setCopyStatus(null);
-    setSaveStatus(null);
+  const refreshQueue = async (filter: DispatchRequestStatus | "all" = queueFilter) => {
+    setQueueLoading(true);
+    setQueueStatus(null);
 
     try {
-      const response = await fetch(evaluateEndpoint, {
+      const query = filter === "all" ? "" : `?status=${filter}`;
+      const response = await fetch(`${dispatchRequestsEndpoint}${query}`);
+      if (!response.ok) {
+        throw new Error(`Queue API returned ${response.status}`);
+      }
+
+      const payload = (await response.json()) as {
+        requests: DispatchRequest[];
+        count: number;
+      };
+      setQueue(payload.requests);
+      setQueueStatus(`Loaded ${payload.count} dispatch request${payload.count === 1 ? "" : "s"}.`);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
+      setQueueStatus(`Unable to load dispatch queue: ${message}`);
+    } finally {
+      setQueueLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshQueue("all");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    void refreshQueue(queueFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queueFilter]);
+
+  const submitCvEvent = async () => {
+    setCvLoading(true);
+    setCvStatus(null);
+
+    try {
+      const location = parseLocationOrThrow();
+      const payload: CreatePersonDownEventRequest = {
+        ...cvInput,
+        location,
+        signal: {
+          ...cvInput.signal,
+          frameTimestampMs: Date.now(),
+        },
+      };
+
+      const response = await fetch(cvEventEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(answers),
+        body: JSON.stringify(payload),
       });
-
       if (!response.ok) {
-        throw new Error(`Triage API returned ${response.status}`);
+        throw new Error(`CV event API returned ${response.status}`);
       }
 
-      const payload = (await response.json()) as TriageEvaluationResponse;
-      setResult(payload);
+      const body = (await response.json()) as { event: PersonDownEvent };
+      setLatestCvEvent(body.event);
+      setCvStatus(
+        body.event.questionnaireRequired
+          ? `Person-down event accepted (${body.event.id}). Questionnaire required before escalation.`
+          : `Event accepted (${body.event.id}). Continue monitoring and reassess if status changes.`,
+      );
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unknown request error";
-      setError(`Unable to evaluate triage: ${message}`);
+      setCvStatus(`Unable to submit CV person-down event: ${message}`);
     } finally {
-      setLoading(false);
+      setCvLoading(false);
     }
   };
 
-  const reset = () => {
-    setAnswers(defaultAnswers);
-    setTimeline(defaultTimeline);
-    setResult(null);
-    setError(null);
-    setCopyStatus(null);
-    setSaveStatus(null);
-    setSavedIncidentId(null);
-  };
-
-  const currentResult = result?.result;
-
-  const selectedStrokeSigns = useMemo(() => {
-    const labels: string[] = [];
-    if (answers.strokeSigns.faceDrooping) {
-      labels.push("Face drooping");
-    }
-    if (answers.strokeSigns.armWeakness) {
-      labels.push("Arm weakness");
-    }
-    if (answers.strokeSigns.speechDifficulty) {
-      labels.push("Speech difficulty");
-    }
-    return labels;
-  }, [answers.strokeSigns]);
-
-  const selectedHeartSigns = useMemo(() => {
-    const labels: string[] = [];
-    if (answers.heartRelatedSigns.chestDiscomfort) {
-      labels.push("Chest discomfort or pressure");
-    }
-    if (answers.heartRelatedSigns.shortnessOfBreath) {
-      labels.push("Shortness of breath");
-    }
-    if (answers.heartRelatedSigns.coldSweat) {
-      labels.push("Cold sweat");
-    }
-    if (answers.heartRelatedSigns.nauseaOrUpperBodyDiscomfort) {
-      labels.push("Nausea or upper-body discomfort");
-    }
-    return labels;
-  }, [answers.heartRelatedSigns]);
-
-  const completedActions = useMemo(
-    () =>
-      actionKeys
-        .filter((key) => timeline.actionsTaken[key])
-        .map((key) => actionLabelMap[key]),
-    [timeline.actionsTaken],
-  );
-
-  const handoffSummary = useMemo(() => {
-    if (!currentResult || !result) {
-      return null;
-    }
-
-    const lines = [
-      "RescueSight Emergency Handoff Summary",
-      `Generated: ${new Date(result.evaluatedAtIso).toLocaleString()}`,
-      `Pathway: ${currentResult.label}`,
-      `Urgency: ${currentResult.urgency.toUpperCase()}`,
-      `First observed time: ${formatDateTime(timeline.firstObservedAtLocal)}`,
-      `Responsiveness: ${answers.responsive ? "Responsive" : "Not responsive"}`,
-      `Breathing: ${answers.breathingNormal ? "Appears normal" : "Abnormal or absent"}`,
-      `FAST signs: ${selectedStrokeSigns.length > 0 ? selectedStrokeSigns.join(", ") : "None reported"}`,
-      `Heart-related signs: ${selectedHeartSigns.length > 0 ? selectedHeartSigns.join(", ") : "None reported"}`,
-      `AED status: ${aedStatusLabelMap[timeline.aedStatus]}`,
-      `Actions already taken: ${completedActions.length > 0 ? completedActions.join("; ") : "None recorded"}`,
-      `Responder notes: ${timeline.responderNotes.trim() || "None"}`,
-      "Safety note: Assistive bystander guidance only. This is not a medical diagnosis.",
-    ];
-
-    return lines.join("\n");
-  }, [
-    answers.breathingNormal,
-    answers.responsive,
-    completedActions,
-    currentResult,
-    result,
-    selectedHeartSigns,
-    selectedStrokeSigns,
-    timeline.aedStatus,
-    timeline.firstObservedAtLocal,
-    timeline.responderNotes,
-  ]);
-
-  const copySummary = async () => {
-    if (!handoffSummary) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(handoffSummary);
-      setCopyStatus("Responder summary copied.");
-    } catch {
-      setCopyStatus("Clipboard was unavailable. Copy summary manually.");
-    }
-  };
-
-  const saveIncident = async () => {
-    if (!handoffSummary) {
+  const requestBrowserLocation = () => {
+    if (!navigator.geolocation) {
+      setCvStatus("Browser geolocation is unavailable in this environment.");
       return;
     }
 
-    setSavingIncident(true);
-    setSaveStatus(null);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocationForm((current) => ({
+          ...current,
+          latitude: position.coords.latitude.toFixed(6),
+          longitude: position.coords.longitude.toFixed(6),
+          accuracyMeters: position.coords.accuracy.toFixed(1),
+        }));
+        setCvStatus("Browser location populated. Verify before submitting.");
+      },
+      (error) => {
+        setCvStatus(`Location request failed: ${error.message}`);
+      },
+      { timeout: 8_000 },
+    );
+  };
+
+  const submitDispatchRequest = async () => {
+    setDispatchLoading(true);
+    setDispatchStatus(null);
 
     try {
-      if (!savedIncidentId) {
-        const response = await fetch(incidentsEndpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            answers,
-            timeline,
-            handoffSummary,
-            source: "web",
-          }),
-        });
+      const location = parseLocationOrThrow();
+      const personDownSignal = latestCvEvent?.signal ?? {
+        status: cvInput.signal.status,
+        confidence: cvInput.signal.confidence,
+        source: cvInput.signal.source,
+        frameTimestampMs: Date.now(),
+      };
 
-        if (!response.ok) {
-          throw new Error(`Incident API returned ${response.status}`);
-        }
+      const payload: CreateDispatchRequest = {
+        questionnaire,
+        location,
+        personDownSignal,
+        emergencyCallRequested: true,
+      };
 
-        const payload = (await response.json()) as { incident: { id: string } };
-        setSavedIncidentId(payload.incident.id);
-        setSaveStatus(`Incident record saved (${payload.incident.id}).`);
-        return;
-      }
-
-      const response = await fetch(`${incidentsEndpoint}/${savedIncidentId}`, {
-        method: "PATCH",
+      const response = await fetch(dispatchRequestsEndpoint, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          timeline,
-          handoffSummary,
-          status: "open",
-        }),
+        body: JSON.stringify(payload),
       });
-
       if (!response.ok) {
-        throw new Error(`Incident API returned ${response.status}`);
+        throw new Error(`Dispatch API returned ${response.status}`);
       }
 
-      setSaveStatus(`Incident record updated (${savedIncidentId}).`);
+      const body = (await response.json()) as {
+        request: DispatchRequest;
+        backendEscalation: { queued: boolean; channel: string; requestId: string };
+      };
+
+      setLatestDispatchRequest(body.request);
+      setDispatchStatus(
+        `Escalation queued to ${body.backendEscalation.channel} (${body.backendEscalation.requestId}).`,
+      );
+      await refreshQueue(queueFilter);
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unknown request error";
-      setSaveStatus(`Unable to save incident record: ${message}`);
+      setDispatchStatus(`Unable to create dispatch request: ${message}`);
     } finally {
-      setSavingIncident(false);
+      setDispatchLoading(false);
+    }
+  };
+
+  const applyDispatchUpdate = async (
+    requestId: string,
+    payload: {
+      status?: DispatchRequestStatus;
+      assignment?: { unitId: string; dispatcher: string; etaMinutes: number };
+      dispatchNotes?: string;
+    },
+  ) => {
+    const response = await fetch(`${dispatchRequestsEndpoint}/${requestId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`Dispatch update API returned ${response.status}`);
+    }
+  };
+
+  const dispatchUnit = async (requestId: string) => {
+    const draft = getDraft(requestId);
+    if (!draft.unitId.trim() || !draft.dispatcher.trim()) {
+      setQueueStatus("Unit ID and dispatcher are required to dispatch an EMT unit.");
+      return;
+    }
+
+    const etaMinutes = Number(draft.etaMinutes);
+    if (!Number.isFinite(etaMinutes) || etaMinutes <= 0) {
+      setQueueStatus("ETA minutes must be a positive number.");
+      return;
+    }
+
+    try {
+      setQueueStatus(null);
+      await applyDispatchUpdate(requestId, {
+        assignment: {
+          unitId: draft.unitId.trim(),
+          dispatcher: draft.dispatcher.trim(),
+          etaMinutes,
+        },
+        dispatchNotes: draft.dispatchNotes.trim() || undefined,
+      });
+      setQueueStatus(`Request ${requestId} dispatched to ${draft.unitId.trim()}.`);
+      await refreshQueue(queueFilter);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
+      setQueueStatus(`Unable to dispatch unit: ${message}`);
+    }
+  };
+
+  const resolveRequest = async (requestId: string) => {
+    try {
+      setQueueStatus(null);
+      await applyDispatchUpdate(requestId, { status: "resolved" });
+      setQueueStatus(`Request ${requestId} marked resolved.`);
+      await refreshQueue(queueFilter);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
+      setQueueStatus(`Unable to resolve request: ${message}`);
     }
   };
 
   return (
     <main className="app-shell">
       <header className="hero">
-        <h1>RescueSight</h1>
+        <h1>RescueSight Dispatch Workflow</h1>
         <p>
-          Guided bystander support for suspected emergencies. This tool does not diagnose medical conditions and does not replace emergency professionals.
+          Demo flow: CV flags a possible person-down event, a bystander answers a short
+          questionnaire, and a backend dispatch request is queued for a pseudo-hospital dashboard.
+        </p>
+        <p className="hero-note">
+          Safety: assistive workflow only. Do not treat this as diagnosis or a replacement for real
+          emergency services.
         </p>
       </header>
 
       <section className="panel">
-        <h2>Triage Checklist</h2>
+        <h2>1) CV Person-Down Intake</h2>
+        <p className="helper-text">
+          Submit a detection event. When confidence is high, the system requires human questionnaire
+          confirmation before escalation.
+        </p>
 
-        <div className="question-block">
-          <h3>Demo Scenario Presets</h3>
-          <p className="helper-text">Load a preset to quickly simulate common emergency pathways.</p>
-          <div className="scenario-grid">
-            {scenarioPresets.map((preset) => (
-              <button type="button" key={preset.id} className="preset-button" onClick={() => loadPreset(preset)}>
-                <strong>{preset.title}</strong>
-                <span>{preset.description}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="question-block">
-          <h3>1. Responsiveness</h3>
+        <div className="form-grid">
           <label>
-            <input
-              type="radio"
-              name="responsive"
-              checked={answers.responsive}
-              onChange={() => setAnswers((current) => ({ ...current, responsive: true }))}
-            />
-            Person is responsive
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="responsive"
-              checked={!answers.responsive}
-              onChange={() => setAnswers((current) => ({ ...current, responsive: false }))}
-            />
-            Person is not responsive
-          </label>
-        </div>
-
-        <div className="question-block">
-          <h3>2. Breathing</h3>
-          <label>
-            <input
-              type="radio"
-              name="breathing"
-              checked={answers.breathingNormal}
-              onChange={() => setAnswers((current) => ({ ...current, breathingNormal: true }))}
-            />
-            Breathing appears normal
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="breathing"
-              checked={!answers.breathingNormal}
-              onChange={() => setAnswers((current) => ({ ...current, breathingNormal: false }))}
-            />
-            Breathing is abnormal or absent
-          </label>
-        </div>
-
-        <div className="question-block">
-          <h3>3. FAST Stroke Signs</h3>
-          <label>
-            <input
-              type="checkbox"
-              checked={answers.strokeSigns.faceDrooping}
-              onChange={(event) => setStrokeSign("faceDrooping", event.target.checked)}
-            />
-            Face drooping
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={answers.strokeSigns.armWeakness}
-              onChange={(event) => setStrokeSign("armWeakness", event.target.checked)}
-            />
-            Arm weakness
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={answers.strokeSigns.speechDifficulty}
-              onChange={(event) => setStrokeSign("speechDifficulty", event.target.checked)}
-            />
-            Speech difficulty
-          </label>
-        </div>
-
-        <div className="question-block">
-          <h3>4. Possible Heart-Related Signs</h3>
-          <label>
-            <input
-              type="checkbox"
-              checked={answers.heartRelatedSigns.chestDiscomfort}
-              onChange={(event) => setHeartSign("chestDiscomfort", event.target.checked)}
-            />
-            Chest discomfort or pressure
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={answers.heartRelatedSigns.shortnessOfBreath}
-              onChange={(event) => setHeartSign("shortnessOfBreath", event.target.checked)}
-            />
-            Shortness of breath
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={answers.heartRelatedSigns.coldSweat}
-              onChange={(event) => setHeartSign("coldSweat", event.target.checked)}
-            />
-            Cold sweat
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={answers.heartRelatedSigns.nauseaOrUpperBodyDiscomfort}
-              onChange={(event) => setHeartSign("nauseaOrUpperBodyDiscomfort", event.target.checked)}
-            />
-            Nausea or upper-body discomfort
-          </label>
-        </div>
-
-        <div className="question-block">
-          <h3>Incident Timeline</h3>
-          <label>
-            First observed time
-            <input
-              type="datetime-local"
-              value={timeline.firstObservedAtLocal}
-              onChange={(event) =>
-                setTimeline((current) => ({
-                  ...current,
-                  firstObservedAtLocal: event.target.value,
-                }))
-              }
-            />
-          </label>
-
-          <label>
-            AED status
+            Detection status
             <select
-              value={timeline.aedStatus}
+              value={cvInput.signal.status}
               onChange={(event) =>
-                setTimeline((current) => ({
+                setCvInput((current) => ({
                   ...current,
-                  aedStatus: event.target.value as AedStatus,
+                  signal: {
+                    ...current.signal,
+                    status: event.target.value as CreatePersonDownEventRequest["signal"]["status"],
+                  },
                 }))
               }
             >
-              <option value="unknown">Unknown</option>
-              <option value="not_available">Not available nearby</option>
-              <option value="retrieval_in_progress">Retrieval in progress</option>
-              <option value="on_scene">AED on scene</option>
+              <option value="person_down">Person down</option>
+              <option value="uncertain">Uncertain</option>
+              <option value="not_person_down">Not person down</option>
             </select>
           </label>
 
-          <div className="timeline-actions">
-            {actionKeys.map((key) => (
-              <label key={key}>
-                <input
-                  type="checkbox"
-                  checked={timeline.actionsTaken[key]}
-                  onChange={(event) => setTimelineAction(key, event.target.checked)}
-                />
-                {actionLabelMap[key]}
-              </label>
-            ))}
-          </div>
+          <label>
+            Confidence ({cvInput.signal.confidence.toFixed(2)})
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={cvInput.signal.confidence}
+              onChange={(event) =>
+                setCvInput((current) => ({
+                  ...current,
+                  signal: {
+                    ...current.signal,
+                    confidence: Number(event.target.value),
+                  },
+                }))
+              }
+            />
+          </label>
 
           <label>
-            Notes for responders
-            <textarea
-              value={timeline.responderNotes}
-              placeholder="Add context responders should know."
+            Signal source
+            <select
+              value={cvInput.signal.source}
               onChange={(event) =>
-                setTimeline((current) => ({
+                setCvInput((current) => ({
                   ...current,
-                  responderNotes: event.target.value,
+                  signal: {
+                    ...current.signal,
+                    source: event.target.value as CreatePersonDownEventRequest["signal"]["source"],
+                  },
+                }))
+              }
+            >
+              <option value="cv">CV</option>
+              <option value="manual">Manual</option>
+              <option value="api">API</option>
+            </select>
+          </label>
+
+          <label>
+            Source device ID
+            <input
+              type="text"
+              value={cvInput.sourceDeviceId ?? ""}
+              onChange={(event) =>
+                setCvInput((current) => ({
+                  ...current,
+                  sourceDeviceId: event.target.value,
+                }))
+              }
+              placeholder="quest3-kiosk-01"
+            />
+          </label>
+
+          <label>
+            Location label
+            <input
+              type="text"
+              value={locationForm.label}
+              onChange={(event) =>
+                setLocationForm((current) => ({ ...current, label: event.target.value }))
+              }
+              placeholder="Main entrance"
+            />
+          </label>
+
+          <label>
+            Indoor descriptor
+            <input
+              type="text"
+              value={locationForm.indoorDescriptor}
+              onChange={(event) =>
+                setLocationForm((current) => ({
+                  ...current,
+                  indoorDescriptor: event.target.value,
+                }))
+              }
+              placeholder="Floor 1 - west lobby"
+            />
+          </label>
+
+          <label>
+            Latitude
+            <input
+              type="number"
+              step="0.000001"
+              value={locationForm.latitude}
+              onChange={(event) =>
+                setLocationForm((current) => ({ ...current, latitude: event.target.value }))
+              }
+            />
+          </label>
+
+          <label>
+            Longitude
+            <input
+              type="number"
+              step="0.000001"
+              value={locationForm.longitude}
+              onChange={(event) =>
+                setLocationForm((current) => ({ ...current, longitude: event.target.value }))
+              }
+            />
+          </label>
+
+          <label>
+            Accuracy (meters)
+            <input
+              type="number"
+              step="0.1"
+              value={locationForm.accuracyMeters}
+              onChange={(event) =>
+                setLocationForm((current) => ({
+                  ...current,
+                  accuracyMeters: event.target.value,
                 }))
               }
             />
@@ -615,80 +506,323 @@ export const App = () => {
         </div>
 
         <div className="actions-row">
-          <button type="button" className="action-button" disabled={loading} onClick={evaluate}>
-            {loading ? "Evaluating..." : "Evaluate Emergency Pathway"}
+          <button type="button" className="action-button" disabled={cvLoading} onClick={submitCvEvent}>
+            {cvLoading ? "Submitting..." : "Submit CV Person-Down Event"}
           </button>
-          <button type="button" className="action-button secondary" onClick={reset}>
-            Reset
+          <button type="button" className="action-button secondary" onClick={requestBrowserLocation}>
+            Use Browser Location
           </button>
         </div>
 
-        {error ? <p className="error-message">{error}</p> : null}
+        {latestCvEvent ? (
+          <div className="result-card">
+            <p>
+              Event ID: <strong>{latestCvEvent.id}</strong>
+            </p>
+            <p>
+              Questionnaire required: <strong>{latestCvEvent.questionnaireRequired ? "Yes" : "No"}</strong>
+            </p>
+            <p>
+              Recommended priority: <strong>{priorityLabelMap[latestCvEvent.recommendedPriority]}</strong>
+            </p>
+            <p className="safety-notice">{latestCvEvent.safetyNotice}</p>
+          </div>
+        ) : null}
+
+        {cvStatus ? <p className="status-message">{cvStatus}</p> : null}
       </section>
 
-      {currentResult ? (
-        <section className="panel result-panel">
-          <h2>{currentResult.label}</h2>
-          <p className={`urgency ${currentResult.urgency}`}>Urgency: {currentResult.urgency.toUpperCase()}</p>
-          <p>{currentResult.summary}</p>
+      <section className="panel">
+        <h2>2) Human-In-The-Loop Questionnaire</h2>
+        <p className="helper-text">
+          Collect quick bystander observations before escalation. This action simulates a 911-like
+          call by posting to the backend dispatch queue.
+        </p>
 
-          <h3>Immediate Actions</h3>
-          <ol>
-            {currentResult.immediateActions.map((action) => (
-              <li key={action}>{action}</li>
-            ))}
-          </ol>
+        <div className="form-grid">
+          <label>
+            Responsiveness
+            <select
+              value={questionnaire.responsiveness}
+              onChange={(event) =>
+                setQuestionnaire((current) => ({
+                  ...current,
+                  responsiveness: event.target.value as CreateDispatchRequest["questionnaire"]["responsiveness"],
+                }))
+              }
+            >
+              <option value="unresponsive">Unresponsive</option>
+              <option value="responsive">Responsive</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </label>
 
-          <h3>Follow-up Actions</h3>
-          <ol>
-            {currentResult.followUpActions.map((action) => (
-              <li key={action}>{action}</li>
-            ))}
-          </ol>
+          <label>
+            Breathing
+            <select
+              value={questionnaire.breathing}
+              onChange={(event) =>
+                setQuestionnaire((current) => ({
+                  ...current,
+                  breathing: event.target.value as CreateDispatchRequest["questionnaire"]["breathing"],
+                }))
+              }
+            >
+              <option value="abnormal_or_absent">Abnormal or absent</option>
+              <option value="normal">Normal</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </label>
 
-          <p className="safety-notice">{currentResult.safetyNotice}</p>
+          <label>
+            Pulse
+            <select
+              value={questionnaire.pulse}
+              onChange={(event) =>
+                setQuestionnaire((current) => ({
+                  ...current,
+                  pulse: event.target.value as CreateDispatchRequest["questionnaire"]["pulse"],
+                }))
+              }
+            >
+              <option value="unknown">Unknown</option>
+              <option value="absent">Absent</option>
+              <option value="present">Present</option>
+            </select>
+          </label>
 
-          {currentResult.cprGuidance ? (
-            <>
-              <h3>CPR Instructions</h3>
-              <ol>
-                {currentResult.cprGuidance.instructions.map((instruction) => (
-                  <li key={instruction}>{instruction}</li>
-                ))}
-              </ol>
-              <CprMetronome
-                minBpm={currentResult.cprGuidance.targetBpmRange[0]}
-                maxBpm={currentResult.cprGuidance.targetBpmRange[1]}
-              />
-            </>
-          ) : null}
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={questionnaire.severeBleeding}
+              onChange={(event) =>
+                setQuestionnaire((current) => ({
+                  ...current,
+                  severeBleeding: event.target.checked,
+                }))
+              }
+            />
+            Severe bleeding observed
+          </label>
 
-          {handoffSummary ? (
-            <section className="handoff-summary">
-              <h3>Responder Handoff Summary</h3>
-              <p className="helper-text">
-                Share this with arriving responders to preserve timeline and observed context.
-              </p>
-              <textarea readOnly value={handoffSummary} />
-              <div className="actions-row">
-                <button type="button" className="action-button" onClick={copySummary}>
-                  Copy Summary
-                </button>
-                <button type="button" className="action-button secondary" disabled={savingIncident} onClick={saveIncident}>
-                  {savingIncident
-                    ? "Saving..."
-                    : savedIncidentId
-                      ? "Update Incident Record"
-                      : "Save Incident Record"}
-                </button>
-              </div>
-              {savedIncidentId ? <p className="helper-text">Incident ID: {savedIncidentId}</p> : null}
-              {copyStatus ? <p className="status-message">{copyStatus}</p> : null}
-              {saveStatus ? <p className="status-message">{saveStatus}</p> : null}
-            </section>
-          ) : null}
-        </section>
-      ) : null}
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={questionnaire.majorTrauma}
+              onChange={(event) =>
+                setQuestionnaire((current) => ({
+                  ...current,
+                  majorTrauma: event.target.checked,
+                }))
+              }
+            />
+            Major trauma suspected
+          </label>
+        </div>
+
+        <label className="textarea-label">
+          Bystander notes
+          <textarea
+            value={questionnaire.notes ?? ""}
+            onChange={(event) =>
+              setQuestionnaire((current) => ({
+                ...current,
+                notes: event.target.value,
+              }))
+            }
+            placeholder="Additional scene context for dispatchers"
+          />
+        </label>
+
+        <div className="actions-row">
+          <button
+            type="button"
+            className="action-button"
+            disabled={dispatchLoading}
+            onClick={submitDispatchRequest}
+          >
+            {dispatchLoading ? "Escalating..." : "Send Backend Emergency Escalation"}
+          </button>
+        </div>
+
+        {latestDispatchRequest ? (
+          <div className="result-card">
+            <p>
+              Dispatch Request ID: <strong>{latestDispatchRequest.id}</strong>
+            </p>
+            <p>
+              Priority: <strong>{priorityLabelMap[latestDispatchRequest.priority]}</strong>
+            </p>
+            <p>
+              Status: <strong>{statusLabelMap[latestDispatchRequest.status]}</strong>
+            </p>
+            <p className="safety-notice">{latestDispatchRequest.safetyNotice}</p>
+          </div>
+        ) : null}
+
+        {dispatchStatus ? <p className="status-message">{dispatchStatus}</p> : null}
+      </section>
+
+      <section className="panel">
+        <h2>3) Pseudo-Hospital Dispatch Dashboard</h2>
+        <div className="queue-toolbar">
+          <label>
+            Queue filter
+            <select
+              value={queueFilter}
+              onChange={(event) =>
+                setQueueFilter(event.target.value as DispatchRequestStatus | "all")
+              }
+            >
+              <option value="all">All</option>
+              {statusOrder.map((status) => (
+                <option key={status} value={status}>
+                  {statusLabelMap[status]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <button type="button" className="action-button secondary" onClick={() => void refreshQueue(queueFilter)}>
+            {queueLoading ? "Refreshing..." : "Refresh Queue"}
+          </button>
+        </div>
+
+        {queue.length === 0 ? <p className="helper-text">No requests in the selected queue.</p> : null}
+
+        <div className="queue-grid">
+          {queue.map((request) => {
+            const draft = getDraft(request.id);
+
+            return (
+              <article key={request.id} className="queue-card">
+                <header className="queue-card-header">
+                  <strong>{request.location.label}</strong>
+                  <div className="badge-row">
+                    <span className={`badge status-${request.status}`}>{statusLabelMap[request.status]}</span>
+                    <span className={`badge priority-${request.priority}`}>
+                      {priorityLabelMap[request.priority]}
+                    </span>
+                  </div>
+                </header>
+
+                <p className="meta-line">Created: {formatDateTime(request.createdAtIso)}</p>
+                <p className="meta-line">
+                  Location: {request.location.latitude.toFixed(6)}, {request.location.longitude.toFixed(6)}
+                </p>
+                {request.location.indoorDescriptor ? (
+                  <p className="meta-line">Indoor: {request.location.indoorDescriptor}</p>
+                ) : null}
+
+                <div className="triage-line">
+                  <span>Resp: {request.questionnaire.responsiveness}</span>
+                  <span>Breathing: {request.questionnaire.breathing}</span>
+                  <span>Pulse: {request.questionnaire.pulse}</span>
+                </div>
+
+                <div className="triage-line">
+                  <span>Severe bleeding: {request.questionnaire.severeBleeding ? "yes" : "no"}</span>
+                  <span>Major trauma: {request.questionnaire.majorTrauma ? "yes" : "no"}</span>
+                </div>
+
+                <p className="meta-line">
+                  CV signal: {request.personDownSignal.status} ({request.personDownSignal.confidence.toFixed(2)})
+                </p>
+                {request.questionnaire.notes ? <p className="notes">Notes: {request.questionnaire.notes}</p> : null}
+
+                {request.assignment ? (
+                  <div className="result-card compact">
+                    <p>
+                      Assigned unit <strong>{request.assignment.unitId}</strong> by{" "}
+                      <strong>{request.assignment.dispatcher}</strong> (ETA {request.assignment.etaMinutes}m)
+                    </p>
+                    <p className="meta-line">Assigned: {formatDateTime(request.assignment.assignedAtIso)}</p>
+                  </div>
+                ) : null}
+
+                {request.status !== "resolved" ? (
+                  <div className="assignment-form">
+                    <input
+                      type="text"
+                      value={draft.unitId}
+                      placeholder="Unit ID"
+                      onChange={(event) =>
+                        setAssignmentDrafts((current) => ({
+                          ...current,
+                          [request.id]: {
+                            ...draft,
+                            unitId: event.target.value,
+                          },
+                        }))
+                      }
+                    />
+                    <input
+                      type="text"
+                      value={draft.dispatcher}
+                      placeholder="Dispatcher"
+                      onChange={(event) =>
+                        setAssignmentDrafts((current) => ({
+                          ...current,
+                          [request.id]: {
+                            ...draft,
+                            dispatcher: event.target.value,
+                          },
+                        }))
+                      }
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      value={draft.etaMinutes}
+                      placeholder="ETA min"
+                      onChange={(event) =>
+                        setAssignmentDrafts((current) => ({
+                          ...current,
+                          [request.id]: {
+                            ...draft,
+                            etaMinutes: event.target.value,
+                          },
+                        }))
+                      }
+                    />
+                    <textarea
+                      value={draft.dispatchNotes}
+                      placeholder="Dispatch notes"
+                      onChange={(event) =>
+                        setAssignmentDrafts((current) => ({
+                          ...current,
+                          [request.id]: {
+                            ...draft,
+                            dispatchNotes: event.target.value,
+                          },
+                        }))
+                      }
+                    />
+                    <div className="actions-row">
+                      <button
+                        type="button"
+                        className="action-button"
+                        onClick={() => void dispatchUnit(request.id)}
+                      >
+                        Dispatch EMT
+                      </button>
+                      <button
+                        type="button"
+                        className="action-button secondary"
+                        onClick={() => void resolveRequest(request.id)}
+                      >
+                        Mark Resolved
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+
+        {queueStatus ? <p className="status-message">{queueStatus}</p> : null}
+      </section>
     </main>
   );
 };

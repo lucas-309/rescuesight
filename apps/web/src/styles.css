@@ -13,7 +13,7 @@ body {
 }
 
 .app-shell {
-  max-width: 980px;
+  max-width: 1080px;
   margin: 0 auto;
   padding: 24px 16px 48px;
 }
@@ -35,6 +35,12 @@ body {
   line-height: 1.45;
 }
 
+.hero-note {
+  margin-top: 10px;
+  font-size: 0.95rem;
+  color: #d8f5e6;
+}
+
 .panel {
   background: #ffffff;
   border-radius: 14px;
@@ -48,29 +54,31 @@ body {
   margin-top: 0;
 }
 
-.question-block {
-  padding: 12px;
-  border: 1px solid #e3efe8;
-  border-radius: 10px;
-  margin: 12px 0;
-  background: #f8fcf9;
+.helper-text {
+  margin-top: 0;
+  color: #3a5d4d;
+  font-size: 0.95rem;
 }
 
-.question-block h3 {
-  margin: 0 0 8px;
-  font-size: 1.04rem;
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
 }
 
-.question-block label {
-  display: block;
-  margin: 8px 0;
+.form-grid label,
+.queue-toolbar label,
+.textarea-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  color: #1c4f37;
 }
 
-.question-block input[type="datetime-local"],
-.question-block select,
-.question-block textarea {
-  width: 100%;
-  margin-top: 6px;
+input,
+select,
+textarea {
   border: 1px solid #bfdacc;
   border-radius: 8px;
   padding: 8px 10px;
@@ -79,57 +87,33 @@ body {
   background: #ffffff;
 }
 
-.question-block textarea {
-  min-height: 82px;
+textarea {
+  min-height: 78px;
   resize: vertical;
 }
 
-.helper-text {
-  margin-top: 0;
-  color: #3a5d4d;
-  font-size: 0.95rem;
-}
-
-.scenario-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+.checkbox-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
   gap: 8px;
+  font-weight: 600;
+  padding: 8px 10px;
+  background: #f8fcf9;
+  border: 1px solid #e3efe8;
+  border-radius: 10px;
+  align-self: end;
 }
 
-.preset-button {
-  text-align: left;
-  border: 1px solid #bfdacc;
-  border-radius: 9px;
-  padding: 10px;
-  background: #ffffff;
-  color: #143728;
-  cursor: pointer;
-}
-
-.preset-button:hover {
-  background: #eff8f3;
-}
-
-.preset-button strong {
-  display: block;
-  margin-bottom: 4px;
-}
-
-.preset-button span {
-  font-size: 0.9rem;
-  color: #426555;
-}
-
-.timeline-actions {
-  display: grid;
-  gap: 4px;
-  margin: 10px 0;
+.textarea-label {
+  margin-top: 10px;
 }
 
 .actions-row {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  margin-top: 12px;
 }
 
 .action-button {
@@ -156,97 +140,125 @@ body {
   color: #153c2a;
 }
 
-.result-panel .urgency {
-  font-weight: 700;
-  padding: 6px 10px;
-  border-radius: 8px;
-  display: inline-block;
+.result-card {
+  margin-top: 12px;
+  border: 1px solid #d7ebe0;
+  border-radius: 10px;
+  background: #f8fcf9;
+  padding: 10px 12px;
 }
 
-.result-panel .urgency.critical {
-  background: #fde3e1;
-  color: #7a1c16;
+.result-card.compact {
+  margin-top: 10px;
 }
 
-.result-panel .urgency.high {
-  background: #fff2d7;
-  color: #7a4b00;
+.result-card p {
+  margin: 0 0 6px;
 }
 
-.error-message {
-  color: #7f1d1d;
-  background: #fee2e2;
-  padding: 8px 10px;
-  border-radius: 8px;
+.result-card p:last-child {
+  margin-bottom: 0;
 }
 
 .safety-notice {
   border-left: 4px solid #2a7a57;
   background: #ecf9f0;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 8px;
 }
 
-.metronome {
-  border: 1px solid #d7ebe0;
-  background: #f8fcf9;
-  border-radius: 10px;
-  padding: 12px;
+.status-message {
+  margin: 10px 0 0;
+  color: #1f5c3f;
+  font-weight: 600;
+}
+
+.queue-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.queue-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
   margin-top: 12px;
 }
 
-.metronome-controls {
+.queue-card {
+  border: 1px solid #d7ebe0;
+  border-radius: 12px;
+  background: #fcfffd;
+  padding: 12px;
+}
+
+.queue-card-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.badge-row {
+  display: flex;
+  gap: 6px;
+}
+
+.badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.badge.status-pending_review {
+  background: #fef3c7;
+  color: #854d0e;
+}
+
+.badge.status-dispatched {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.badge.status-resolved {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge.priority-critical {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.badge.priority-high {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.meta-line,
+.notes,
+.triage-line {
+  margin: 0 0 6px;
+  font-size: 0.92rem;
+  color: #244d39;
+}
+
+.triage-line {
+  display: flex;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-.metronome-controls input[type="range"] {
-  width: 180px;
-}
-
-.beat-indicator {
+.assignment-form {
   margin-top: 10px;
-  border-radius: 8px;
-  border: 1px solid #bfdacc;
-  padding: 10px;
-  text-align: center;
-  color: #1d6b49;
-  background: #f1faef;
-  transition: transform 100ms ease, background-color 100ms ease;
-}
-
-.beat-indicator.active {
-  background: #f9d8d2;
-  color: #7a1c16;
-  transform: scale(1.02);
-}
-
-.handoff-summary {
-  margin-top: 16px;
-  border: 1px solid #d7ebe0;
-  border-radius: 10px;
-  padding: 12px;
-  background: #f8fcf9;
-}
-
-.handoff-summary textarea {
-  width: 100%;
-  min-height: 210px;
-  margin: 8px 0 10px;
-  border: 1px solid #bfdacc;
-  border-radius: 8px;
-  padding: 10px;
-  font-family: "SFMono-Regular", "Consolas", "Menlo", monospace;
-  font-size: 0.86rem;
-  resize: vertical;
-}
-
-.status-message {
-  margin: 8px 0 0;
-  color: #1f5c3f;
-  font-weight: 600;
+  display: grid;
+  gap: 8px;
 }
 
 @media (max-width: 640px) {

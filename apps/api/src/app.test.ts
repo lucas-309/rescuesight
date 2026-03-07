@@ -144,6 +144,125 @@ describe("RescueSight API routes", () => {
     assert.match(body.error, /Invalid triage payload/);
   });
 
+  test("person-down intake and dispatch queue lifecycle", async () => {
+    const cvEventResponse = await fetch(`${baseUrl}/api/cv/person-down`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        signal: {
+          status: "person_down",
+          confidence: 0.83,
+          source: "cv",
+          frameTimestampMs: 1731001200,
+        },
+        location: {
+          label: "Student center west entrance",
+          latitude: 37.8718,
+          longitude: -122.2578,
+          indoorDescriptor: "Ground level",
+        },
+        sourceDeviceId: "quest3-kiosk-01",
+      }),
+    });
+    assert.equal(cvEventResponse.status, 201);
+    const cvEventBody = (await cvEventResponse.json()) as {
+      event: { id: string; questionnaireRequired: boolean; recommendedPriority: string };
+    };
+    assert.ok(cvEventBody.event.id);
+    assert.equal(cvEventBody.event.questionnaireRequired, true);
+    assert.equal(cvEventBody.event.recommendedPriority, "critical");
+
+    const eventListResponse = await fetch(`${baseUrl}/api/cv/person-down-events`);
+    assert.equal(eventListResponse.status, 200);
+    const eventListBody = (await eventListResponse.json()) as {
+      count: number;
+      events: Array<{ id: string }>;
+    };
+    assert.equal(eventListBody.count, 1);
+    assert.equal(eventListBody.events[0]?.id, cvEventBody.event.id);
+
+    const createDispatchResponse = await fetch(`${baseUrl}/api/dispatch/requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        questionnaire: {
+          responsiveness: "unresponsive",
+          breathing: "abnormal_or_absent",
+          pulse: "unknown",
+          severeBleeding: false,
+          majorTrauma: false,
+          notes: "Bystander could not detect a reliable pulse.",
+        },
+        location: {
+          label: "Student center west entrance",
+          latitude: 37.8718,
+          longitude: -122.2578,
+        },
+        personDownSignal: {
+          status: "person_down",
+          confidence: 0.83,
+          source: "cv",
+        },
+        emergencyCallRequested: true,
+      }),
+    });
+    assert.equal(createDispatchResponse.status, 201);
+    const createdDispatchBody = (await createDispatchResponse.json()) as {
+      request: { id: string; status: string; priority: string };
+      backendEscalation: { queued: boolean; requestId: string };
+    };
+    assert.ok(createdDispatchBody.request.id);
+    assert.equal(createdDispatchBody.request.status, "pending_review");
+    assert.equal(createdDispatchBody.request.priority, "critical");
+    assert.equal(createdDispatchBody.backendEscalation.queued, true);
+    assert.equal(createdDispatchBody.backendEscalation.requestId, createdDispatchBody.request.id);
+
+    const pendingQueueResponse = await fetch(
+      `${baseUrl}/api/dispatch/requests?status=pending_review`,
+    );
+    assert.equal(pendingQueueResponse.status, 200);
+    const pendingQueueBody = (await pendingQueueResponse.json()) as {
+      count: number;
+      requests: Array<{ id: string; status: string }>;
+    };
+    assert.equal(pendingQueueBody.count, 1);
+    assert.equal(pendingQueueBody.requests[0]?.id, createdDispatchBody.request.id);
+    assert.equal(pendingQueueBody.requests[0]?.status, "pending_review");
+
+    const patchDispatchResponse = await fetch(
+      `${baseUrl}/api/dispatch/requests/${createdDispatchBody.request.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assignment: {
+            unitId: "EMT-42",
+            dispatcher: "jamie",
+            etaMinutes: 5,
+          },
+          dispatchNotes: "EMT-42 dispatched from station C.",
+        }),
+      },
+    );
+    assert.equal(patchDispatchResponse.status, 200);
+    const patchedDispatchBody = (await patchDispatchResponse.json()) as {
+      request: {
+        status: string;
+        assignment?: { unitId: string; etaMinutes: number };
+        dispatchNotes: string;
+      };
+    };
+    assert.equal(patchedDispatchBody.request.status, "dispatched");
+    assert.equal(patchedDispatchBody.request.assignment?.unitId, "EMT-42");
+    assert.equal(patchedDispatchBody.request.assignment?.etaMinutes, 5);
+    assert.equal(patchedDispatchBody.request.dispatchNotes, "EMT-42 dispatched from station C.");
+
+    const getDispatchResponse = await fetch(
+      `${baseUrl}/api/dispatch/requests/${createdDispatchBody.request.id}`,
+    );
+    assert.equal(getDispatchResponse.status, 200);
+  });
+
   test("incident lifecycle: create, list, get, patch, and handoff", async () => {
     const createResponse = await fetch(`${baseUrl}/api/incidents`, {
       method: "POST",
@@ -539,5 +658,46 @@ describe("RescueSight API routes", () => {
 
     const handoffResponse = await fetch(`${baseUrl}/api/incidents/${missingId}/handoff`);
     assert.equal(handoffResponse.status, 404);
+  });
+
+  test("dispatch endpoints return 400 for invalid payloads and filters", async () => {
+    const invalidCvEvent = await fetch(`${baseUrl}/api/cv/person-down`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        signal: {
+          status: "lying",
+          confidence: "high",
+          source: "cv",
+        },
+      }),
+    });
+    assert.equal(invalidCvEvent.status, 400);
+
+    const invalidDispatchCreate = await fetch(`${baseUrl}/api/dispatch/requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        questionnaire: {
+          responsiveness: "awake",
+        },
+      }),
+    });
+    assert.equal(invalidDispatchCreate.status, 400);
+
+    const invalidFilter = await fetch(`${baseUrl}/api/dispatch/requests?status=queued`);
+    assert.equal(invalidFilter.status, 400);
+  });
+
+  test("dispatch endpoints return 404 for unknown request ids", async () => {
+    const response = await fetch(`${baseUrl}/api/dispatch/requests/missing-request-id`);
+    assert.equal(response.status, 404);
+
+    const patchResponse = await fetch(`${baseUrl}/api/dispatch/requests/missing-request-id`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "resolved" }),
+    });
+    assert.equal(patchResponse.status, 404);
   });
 });

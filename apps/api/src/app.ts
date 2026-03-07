@@ -1,8 +1,12 @@
 import cors from "cors";
 import express, { type Request, type Response } from "express";
 import type {
+  CreateDispatchRequest,
+  CreatePersonDownEventRequest,
+  DispatchRequestStatus,
   PersistIncidentRequest,
   TriageEvaluationResponse,
+  UpdateDispatchRequest,
   UpdateIncidentRequest,
   XrCvAssist,
   XrIncidentActionUpdateRequest,
@@ -13,15 +17,22 @@ import type {
   XrTriageHookResponse,
 } from "@rescuesight/shared";
 import { createCvEvaluatorFromEnv, type CvEvaluator } from "./cvClient.js";
+import { InMemoryDispatchStore } from "./dispatchStore.js";
 import { InMemoryIncidentStore } from "./incidentStore.js";
 import {
+  createDispatchRequestPayloadShape,
+  createPersonDownEventPayloadShape,
   isValidAnswers,
+  isValidCreateDispatchRequest,
+  isValidCreatePersonDownEventRequest,
   isValidPersistIncidentRequest,
+  isValidUpdateDispatchRequest,
   isValidUpdateIncidentRequest,
   isValidXrIncidentActionUpdateRequest,
   isValidXrTriageHookRequest,
   persistIncidentPayloadShape,
   triagePayloadShape,
+  updateDispatchRequestPayloadShape,
   updateIncidentPayloadShape,
   xrIncidentActionUpdatePayloadShape,
   xrTriageHookPayloadShape,
@@ -31,15 +42,22 @@ import { buildXrIncidentOverlayResponse, buildXrOverlaySteps } from "./xrHooks.j
 
 interface BuildAppOptions {
   incidentStore?: InMemoryIncidentStore;
+  dispatchStore?: InMemoryDispatchStore;
   cvEvaluator?: CvEvaluator | null;
 }
 
 export const buildApp = (options: BuildAppOptions = {}) => {
   const app = express();
   const incidentStore = options.incidentStore ?? new InMemoryIncidentStore();
+  const dispatchStore = options.dispatchStore ?? new InMemoryDispatchStore();
   const cvEvaluator = options.cvEvaluator ?? createCvEvaluatorFromEnv();
   const cvAssistByIncident = new Map<string, XrCvAssist>();
   const blockedCheckpointIdsByIncident = new Map<string, string[]>();
+  const dispatchStatuses: DispatchRequestStatus[] = [
+    "pending_review",
+    "dispatched",
+    "resolved",
+  ];
 
   const toCheckpointOverlaySteps = (cvAssist: XrCvAssist): XrOverlayStep[] =>
     cvAssist.checkpoints
@@ -111,6 +129,90 @@ export const buildApp = (options: BuildAppOptions = {}) => {
 
   app.get("/health", (_req: Request, res: Response) => {
     res.json({ status: "ok", service: "rescuesight-api" });
+  });
+
+  app.post("/api/cv/person-down", (req: Request, res: Response) => {
+    if (!isValidCreatePersonDownEventRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid person-down event payload.",
+        expected: createPersonDownEventPayloadShape,
+      });
+      return;
+    }
+
+    const payload = req.body as CreatePersonDownEventRequest;
+    const event = dispatchStore.createPersonDownEvent(payload);
+    res.status(201).json({ event });
+  });
+
+  app.get("/api/cv/person-down-events", (_req: Request, res: Response) => {
+    const events = dispatchStore.listPersonDownEvents();
+    res.json({ events, count: events.length });
+  });
+
+  app.post("/api/dispatch/requests", (req: Request, res: Response) => {
+    if (!isValidCreateDispatchRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid dispatch request payload.",
+        expected: createDispatchRequestPayloadShape,
+      });
+      return;
+    }
+
+    const payload = req.body as CreateDispatchRequest;
+    const request = dispatchStore.createDispatchRequest(payload);
+    res.status(201).json({
+      request,
+      backendEscalation: {
+        queued: true,
+        channel: "pseudo_hospital_dashboard",
+        requestId: request.id,
+      },
+    });
+  });
+
+  app.get("/api/dispatch/requests", (req: Request, res: Response) => {
+    const status = req.query.status;
+    if (status !== undefined) {
+      if (typeof status !== "string" || !dispatchStatuses.includes(status as DispatchRequestStatus)) {
+        res.status(400).json({
+          error: "Invalid dispatch status filter.",
+          expected: dispatchStatuses,
+        });
+        return;
+      }
+    }
+
+    const requests = dispatchStore.listDispatchRequests(status as DispatchRequestStatus | undefined);
+    res.json({ requests, count: requests.length });
+  });
+
+  app.get("/api/dispatch/requests/:requestId", (req: Request, res: Response) => {
+    const request = dispatchStore.getDispatchRequest(req.params.requestId);
+    if (!request) {
+      res.status(404).json({ error: "Dispatch request not found." });
+      return;
+    }
+    res.json({ request });
+  });
+
+  app.patch("/api/dispatch/requests/:requestId", (req: Request, res: Response) => {
+    if (!isValidUpdateDispatchRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid dispatch update payload.",
+        expected: updateDispatchRequestPayloadShape,
+      });
+      return;
+    }
+
+    const payload = req.body as UpdateDispatchRequest;
+    const updated = dispatchStore.updateDispatchRequest(req.params.requestId, payload);
+    if (!updated) {
+      res.status(404).json({ error: "Dispatch request not found." });
+      return;
+    }
+
+    res.json({ request: updated });
   });
 
   app.get("/api/triage/questions", (_req: Request, res: Response) => {

@@ -1,21 +1,23 @@
 # RescueSight
 
-RescueSight is an assistive emergency guidance prototype for public settings. It helps bystanders respond to suspected emergencies through structured triage prompts, CPR assistance, and escalation guidance.
+RescueSight is an assistive emergency guidance prototype for public settings.
+
+Current demo focus: detect a **possible person-down event**, run a short **human-in-the-loop questionnaire**, then send a **backend escalation request** to a pseudo-hospital dashboard where dispatchers can assign EMT units.
 
 This project is intentionally positioned as decision support, not diagnosis.
 
 ## Current Stack
 
-- `apps/web`: React + Vite + TypeScript triage UI
-- `apps/api`: Express + TypeScript triage decision engine API
+- `apps/web`: React + Vite + TypeScript bystander + dispatch dashboard UI
+- `apps/api`: Express + TypeScript workflow API (triage, XR hooks, CV intake, dispatch queue)
 - `packages/shared`: shared domain types
 - `docs/unity`: Quest 3 Unity hook scripts and integration notes
 - `cv_model/prototype`: Python CV prototype and CV hook stub service
 
 ## Repository Layout
 
-- `INSTRUCTIONS.md`: product intent, safety constraints, and scope
-- `IMPLEMENTATION_README.md`: implementation plan + ongoing work log
+- `INSTRUCTIONS.md`: product intent, safety constraints, and current execution plan
+- `IMPLEMENTATION_README.md`: implementation roadmap + work log
 - `docs/ARCHITECTURE.md`: technical architecture and module boundaries
 - `docs/unity/QUEST3_UNITY_INTEGRATION.md`: Quest 3 + Unity hook setup
 - `cv_model/prototype/cv_service.py`: Python CV hint service (`/api/cv/evaluate`)
@@ -55,35 +57,19 @@ Then start API with `npm run dev:api` and submit `cvSignal` with XR triage paylo
 
 ## Implemented Demo Features
 
-- Guided triage checklist for:
-  - responsiveness
-  - breathing
-  - FAST stroke signs
-  - heart-related warning signs
-- Demo scenario presets:
-  - collapse / unresponsive
-  - suspected stroke
-  - heart-related signs
-  - unclear emergency
-- Deterministic pathway output:
-  - possible cardiac arrest
-  - suspected stroke
-  - possible heart-related emergency
-  - unclear emergency
-- Immediate and follow-up actions with safety language
-- CPR rhythm helper (100-120 BPM) for possible cardiac arrest pathway
-- Incident timeline capture:
-  - first observed time
-  - AED status/retrieval state
-  - actions already taken
-  - responder notes
-- Responder handoff summary card with copy-to-clipboard export
-- Incident persistence workflow:
-  - save incident record from web UI
-  - update saved record with revised timeline/handoff
-  - incident id display for retrieval/debugging
+- CV person-down intake endpoint (`POST /api/cv/person-down`) with confidence-based questionnaire gating
+- Human-in-the-loop questionnaire capture for pulse/breathing/responsiveness and scene notes
+- Backend emergency escalation flow (`POST /api/dispatch/requests`) that simulates 911-style escalation without calling 911
+- Pseudo-hospital dispatch dashboard queue:
+  - list/filter requests by status
+  - assign EMT unit and ETA
+  - resolve requests after handoff
+- Location capture for escalation payloads (label + lat/long + indoor descriptor)
+- Existing triage, incident timeline, XR overlay, and CV checkpoint APIs remain available for integration
 
 ## API Endpoints
+
+Core triage/XR APIs:
 
 - `GET /health`
 - `GET /api/triage/questions`
@@ -97,16 +83,38 @@ Then start API with `npm run dev:api` and submit `cvSignal` with XR triage paylo
 - `PATCH /api/incidents/:incidentId`
 - `GET /api/incidents/:incidentId/handoff`
 
+Person-down + dispatch workflow APIs:
+
+- `POST /api/cv/person-down`
+- `GET /api/cv/person-down-events`
+- `POST /api/dispatch/requests`
+- `GET /api/dispatch/requests`
+- `GET /api/dispatch/requests/:requestId`
+- `PATCH /api/dispatch/requests/:requestId`
+
 External CV stub service (Python):
+
 - `GET /health`
 - `POST /api/cv/evaluate`
 
 ## Testing
 
-- Run full API tests:
+- Run API tests:
 
 ```bash
 npm run test:api
+```
+
+- Run typechecks:
+
+```bash
+npm run typecheck
+```
+
+- Build all workspaces:
+
+```bash
+npm run build
 ```
 
 ## Safety Positioning
