@@ -167,7 +167,7 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
   - `PATCH /api/dispatch/requests/:requestId`
 - Added deterministic dispatch priority rules based on questionnaire + person-down confidence.
 - Reworked web app around the new flow:
-  - CV person-down intake form with confidence and location capture
+  - live CV summary panel sourced from webcam stream stats via API (no manual CV metric form)
   - human questionnaire form for pulse/breathing/responsiveness and scene notes
   - backend escalation submit action (simulated 911 handoff to backend queue)
   - pseudo-hospital dashboard with status filtering, EMT assignment, and resolve actions
@@ -176,6 +176,13 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
   - validation tests for person-down and dispatch payloads
   - API integration tests covering person-down intake and dispatch lifecycle
 - Updated `README.md` and `INSTRUCTIONS.md` to reflect the new plan and constraints.
+- Added live CV streaming integration:
+  - API endpoints `POST /api/cv/live-signal` and `GET /api/cv/live-summary`
+  - frontend polling of live CV summary for person-down stats and dispatch payload source
+  - webcam runtime flags to stream CV stats directly to API:
+    - `--post-url`
+    - `--source-device-id`
+    - optional `--location-*` metadata
 
 ## Next Planned Steps (Immediate)
 

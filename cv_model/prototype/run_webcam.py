@@ -5,6 +5,7 @@ import json
 from math import cos, radians, sin
 from pathlib import Path
 from typing import Optional
+import urllib.error
 import urllib.request
 
 import cv2
@@ -13,6 +14,8 @@ import numpy as np
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 
+from cv_hooks import CvHookRequest, evaluate_cv_hook
+from hitl_flow import HitlQuestionnaireSession, build_xr_triage_payload
 from cv_signals import (
     BpmEstimator,
     CprTargetStabilizer,
@@ -56,6 +59,71 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=str(Path(__file__).resolve().parent / "models"),
         help="Directory for .task model files",
+    )
+    parser.add_argument(
+        "--api-base-url",
+        type=str,
+        default="",
+        help="Backend base URL for XR triage submissions (example: http://127.0.0.1:8080)",
+    )
+    parser.add_argument(
+        "--disable-hitl",
+        action="store_true",
+        help="Disable person-down-triggered human-in-the-loop questionnaire",
+    )
+    parser.add_argument(
+        "--questionnaire-cooldown-sec",
+        type=float,
+        default=30.0,
+        help="Minimum seconds between auto-triggered questionnaires",
+    )
+    parser.add_argument(
+        "--post-url",
+        type=str,
+        default="",
+        help="Optional API URL to receive live CV signals (example: http://127.0.0.1:8080/api/cv/live-signal)",
+    )
+    parser.add_argument(
+        "--post-interval-ms",
+        type=int,
+        default=1000,
+        help="Minimum interval between live signal POSTs in milliseconds",
+    )
+    parser.add_argument(
+        "--source-device-id",
+        type=str,
+        default="cv-webcam-prototype",
+        help="Source device identifier included in live signal payload",
+    )
+    parser.add_argument(
+        "--location-label",
+        type=str,
+        default="",
+        help="Optional location label for live signal payload",
+    )
+    parser.add_argument(
+        "--location-lat",
+        type=float,
+        default=None,
+        help="Optional latitude for live signal payload",
+    )
+    parser.add_argument(
+        "--location-lon",
+        type=float,
+        default=None,
+        help="Optional longitude for live signal payload",
+    )
+    parser.add_argument(
+        "--location-accuracy",
+        type=float,
+        default=None,
+        help="Optional location accuracy meters for live signal payload",
+    )
+    parser.add_argument(
+        "--location-indoor",
+        type=str,
+        default="",
+        help="Optional indoor descriptor for live signal payload",
     )
     return parser.parse_args()
 
@@ -273,8 +341,101 @@ def draw_status_panel(frame: np.ndarray, lines: list[str]) -> None:
         text_y += line_height + line_gap
 
 
+def post_json(
+    url: str,
+    payload: dict[str, object],
+    timeout_sec: float = 2.5,
+) -> tuple[bool, str, Optional[dict[str, object]]]:
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_sec) as response:
+            raw = response.read().decode("utf-8")
+            body = json.loads(raw) if raw else {}
+            if isinstance(body, dict):
+                parsed_body: Optional[dict[str, object]] = body
+            else:
+                parsed_body = None
+            return True, f"Submitted XR triage ({response.status}).", parsed_body
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8")
+        detail = ""
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
+                    detail = parsed["error"]
+                else:
+                    detail = raw
+            except json.JSONDecodeError:
+                detail = raw
+        if detail:
+            return False, f"XR triage failed ({exc.code}): {detail}", None
+        return False, f"XR triage failed ({exc.code}).", None
+    except urllib.error.URLError as exc:
+        return False, f"XR triage failed: {exc.reason}", None
+
+
+def build_live_signal_payload(args: argparse.Namespace, signal: CVSignal) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "signal": signal.to_dict(),
+        "sourceDeviceId": args.source_device_id,
+    }
+
+    has_location = (
+        args.location_label.strip() != ""
+        and args.location_lat is not None
+        and args.location_lon is not None
+    )
+
+    if has_location:
+        location_payload: dict[str, object] = {
+            "label": args.location_label.strip(),
+            "latitude": float(args.location_lat),
+            "longitude": float(args.location_lon),
+        }
+        if args.location_accuracy is not None:
+            location_payload["accuracyMeters"] = float(args.location_accuracy)
+        if args.location_indoor.strip():
+            location_payload["indoorDescriptor"] = args.location_indoor.strip()
+        payload["location"] = location_payload
+
+    return payload
+
+
+def post_live_signal(url: str, payload: dict[str, object]) -> tuple[bool, str]:
+    request_data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=request_data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=1.5) as response:
+            if 200 <= response.status < 300:
+                return True, f"live stream ok ({response.status})"
+            return False, f"live stream status {response.status}"
+    except urllib.error.HTTPError as exc:
+        return False, f"live stream http {exc.code}"
+    except urllib.error.URLError as exc:
+        return False, f"live stream offline ({exc.reason})"
+
+
 def main() -> int:
     args = parse_args()
+    api_base_url = args.api_base_url.strip().rstrip("/")
+    xr_triage_url = f"{api_base_url}/api/xr/triage" if api_base_url else ""
+    live_signal_url = args.post_url.strip()
+    hitl_enabled = not args.disable_hitl
+    questionnaire = HitlQuestionnaireSession(
+        cooldown_ms=max(0, int(args.questionnaire_cooldown_sec * 1000.0))
+    )
 
     cap = cv2.VideoCapture(args.camera_index)
     if not cap.isOpened():
@@ -284,6 +445,8 @@ def main() -> int:
     bpm_estimator = BpmEstimator()
     target_stabilizer = CprTargetStabilizer(max_fallback_frames=args.max_fallback_frames)
     last_json_print_ms = 0
+    last_live_post_ms = 0
+    live_post_status = "live stream disabled"
 
     model_dir = Path(args.model_dir)
     pose_landmarker, hand_landmarker = create_landmarkers(model_dir)
@@ -335,6 +498,49 @@ def main() -> int:
                 visibility=visibility,
                 frameTimestampMs=now_ms(),
             )
+            cv_assist = evaluate_cv_hook(CvHookRequest(signal=signal))
+            person_down_possible = cv_assist.personDownHint.status == "possible"
+
+            if live_signal_url and signal.frameTimestampMs - last_live_post_ms >= max(
+                250, args.post_interval_ms
+            ):
+                live_payload = build_live_signal_payload(args, signal)
+                posted, post_status = post_live_signal(live_signal_url, live_payload)
+                live_post_status = post_status if posted else post_status
+                last_live_post_ms = signal.frameTimestampMs
+
+            if hitl_enabled:
+                started = questionnaire.maybe_start(
+                    person_down_possible=person_down_possible,
+                    timestamp_ms=signal.frameTimestampMs,
+                )
+                if started:
+                    print(questionnaire.last_status)
+
+            if hitl_enabled and questionnaire.completed_answers is not None:
+                if xr_triage_url:
+                    xr_payload = build_xr_triage_payload(
+                        answers=questionnaire.completed_answers,
+                        signal=signal,
+                        acknowledged_checkpoints=questionnaire.acknowledged_checkpoints(),
+                        incident_id=questionnaire.incident_id,
+                    )
+                    submitted, submit_status, response = post_json(xr_triage_url, xr_payload)
+                    incident_id: Optional[str] = None
+                    if submitted and response is not None:
+                        maybe_incident_id = response.get("incidentId")
+                        if isinstance(maybe_incident_id, str):
+                            incident_id = maybe_incident_id
+                    questionnaire.mark_submitted(
+                        status=submit_status,
+                        timestamp_ms=signal.frameTimestampMs,
+                        incident_id=incident_id,
+                    )
+                else:
+                    questionnaire.mark_submitted(
+                        status="Questionnaire complete (not submitted: set --api-base-url).",
+                        timestamp_ms=signal.frameTimestampMs,
+                    )
 
             frame_h, frame_w = frame.shape[:2]
             if chest_target is not None:
@@ -364,9 +570,19 @@ def main() -> int:
                 f"bpm: {signal.compressionRateBpm}",
                 f"rhythm: {signal.compressionRhythmQuality}",
                 f"visibility: {signal.visibility}",
+                (
+                    "person_down_hint: "
+                    f"{cv_assist.personDownHint.status} ({cv_assist.personDownHint.confidence:.2f})"
+                ),
                 f"target_lock: {'locked' if stabilized_target.isLocked else 'tracking'}",
-                "press 'q' to quit",
+                f"api_stream: {live_post_status}",
             ]
+            if hitl_enabled:
+                status_lines.extend(questionnaire.overlay_lines(api_enabled=bool(xr_triage_url)))
+                status_lines.append("Controls: q=quit y/n=answer h=start x=reset")
+            else:
+                status_lines.append("HITL questionnaire disabled (--disable-hitl).")
+                status_lines.append("Controls: q=quit")
             draw_status_panel(frame, status_lines)
 
             if args.print_json and signal.frameTimestampMs - last_json_print_ms >= 1_000:
@@ -374,8 +590,11 @@ def main() -> int:
                 last_json_print_ms = signal.frameTimestampMs
 
             cv2.imshow("RescueSight CV Prototype", frame)
-            if (cv2.waitKey(1) & 0xFF) == ord("q"):
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
                 break
+            if hitl_enabled:
+                questionnaire.handle_key(key, signal.frameTimestampMs)
     finally:
         pose_landmarker.close()
         hand_landmarker.close()

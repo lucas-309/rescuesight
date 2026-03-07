@@ -24,7 +24,8 @@ cd cv_model/prototype
 - creates/uses `.venv`
 - activates it
 - installs requirements
-- runs `run_webcam.py`
+- optionally runs tests
+- launches `cv_service.py` and `run_webcam.py` together (default)
 
 Equivalent manual setup:
 
@@ -42,16 +43,52 @@ Default (through bootstrap):
 ./bootstrap.sh
 ```
 
+Default launch mode is `--all` (CV service + webcam). Use `--webcam-only` or `--service-only` to limit runtime components.
+
 Pass webcam flags through bootstrap:
 
 ```bash
-./bootstrap.sh -- --print-json --camera-index 0
+./bootstrap.sh --webcam-only -- --print-json --camera-index 0
 ```
 
 Run tests before starting webcam:
 
 ```bash
-./bootstrap.sh --run-tests
+./bootstrap.sh --run-tests --webcam-only
+```
+
+Run everything needed for API + CV + webcam demo:
+
+```bash
+./bootstrap.sh --run-tests --all -- --print-json --camera-index 0
+```
+
+Run webcam and stream live CV summary into the API (used by web dashboard):
+
+```bash
+./bootstrap.sh --webcam-only -- \
+  --post-url http://127.0.0.1:8080/api/cv/live-signal \
+  --source-device-id quest3-kiosk-01 \
+  --location-label "Main lobby" \
+  --location-lat 37.8715 \
+  --location-lon -122.2730
+```
+
+Equivalent env-style bootstrap:
+
+```bash
+LIVE_POST_URL="http://127.0.0.1:8080/api/cv/live-signal" \
+LIVE_SOURCE_DEVICE_ID="quest3-kiosk-01" \
+LIVE_LOCATION_LABEL="Main lobby" \
+LIVE_LOCATION_LAT="37.8715" \
+LIVE_LOCATION_LON="-122.2730" \
+./bootstrap.sh --webcam-only
+```
+
+Run service only:
+
+```bash
+./bootstrap.sh --service-only --service-host 127.0.0.1 --service-port 8091
 ```
 
 Direct run (inside activated venv):
@@ -80,19 +117,31 @@ Optional flags:
 
 - `--camera-index 0`
 - `--max-fallback-frames 12`
+- `--post-url http://127.0.0.1:8080/api/cv/live-signal`
+- `--post-interval-ms 1000`
+- `--source-device-id quest3-kiosk-01`
+- `--location-label "Main lobby" --location-lat 37.8715 --location-lon -122.2730`
+- `--api-base-url http://127.0.0.1:8080` (enable `POST /api/xr/triage` from webcam loop)
+- `--disable-hitl` (disable questionnaire trigger)
+- `--questionnaire-cooldown-sec 30`
 
-Press `q` to quit.
+Controls:
+
+- `q` quit
+- `h` start questionnaire manually
+- `y` / `n` answer questionnaire prompts
+- `x` reset questionnaire session
 
 ## Quick tests
 
 ```bash
-python -m unittest test_cv_signals.py test_cv_hooks.py
+python -m unittest test_cv_signals.py test_cv_hooks.py test_hitl_flow.py
 ```
 
 Or through bootstrap script:
 
 ```bash
-./bootstrap.sh --run-tests -- --print-json
+./bootstrap.sh --run-tests --webcam-only -- --print-json
 ```
 
 Example `POST /api/cv/evaluate` body:

@@ -1,3 +1,5 @@
+import type { XrCvSignalInput } from "./xr.js";
+
 export type PersonDownSignalStatus = "person_down" | "not_person_down" | "uncertain";
 export type PersonDownSignalSource = "cv" | "manual" | "api";
 
@@ -86,4 +88,20 @@ export interface PersonDownEvent {
   questionnaireRequired: boolean;
   recommendedPriority: DispatchPriority;
   safetyNotice: string;
+}
+
+export interface CvLiveSignalIngestRequest {
+  signal: XrCvSignalInput;
+  location?: DispatchLocation;
+  sourceDeviceId?: string;
+}
+
+export interface CvLiveSummary {
+  updatedAtIso: string;
+  signal: XrCvSignalInput;
+  personDownSignal: PersonDownSignal;
+  summaryText: string;
+  safetyNotice: string;
+  location?: DispatchLocation;
+  sourceDeviceId?: string;
 }

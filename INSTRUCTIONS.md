@@ -522,11 +522,12 @@ Current Execution Plan Update (2026-03-07)
 Primary near-term product flow:
 
 1. CV classifies whether a person is possibly down (lying/collapsed context).
-2. If confidence is high enough, require a short human-in-the-loop questionnaire (pulse, breathing, responsiveness, major bleeding/trauma, notes).
-3. Do not place real 911 calls from software.
-4. Instead, send a backend escalation request to RescueSight dispatch APIs.
-5. Show requests in a pseudo-hospital dashboard where a dispatcher can assign EMT units and update request status.
-6. Include location context in escalation payloads (label + coordinates + optional indoor descriptor).
+2. Frontend consumes a live CV summary stream from camera signals (or live feed when feasible) instead of manual CV metric entry.
+3. If confidence is high enough, require a short human-in-the-loop questionnaire (pulse, breathing, responsiveness, major bleeding/trauma, notes).
+4. Do not place real 911 calls from software.
+5. Instead, send a backend escalation request to RescueSight dispatch APIs.
+6. Show requests in a pseudo-hospital dashboard where a dispatcher can assign EMT units and update request status.
+7. Include location context in escalation payloads (label + coordinates + optional indoor descriptor).
 
 Implementation constraints for this flow:
 

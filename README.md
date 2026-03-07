@@ -47,6 +47,18 @@ npm run dev:web
 
 4. Open `http://localhost:5173`.
 
+5. Stream live CV stats to API (for frontend live summary):
+
+```bash
+cd cv_model/prototype
+./bootstrap.sh --webcam-only -- \
+  --post-url http://127.0.0.1:8080/api/cv/live-signal \
+  --source-device-id quest3-kiosk-01 \
+  --location-label "Main lobby" \
+  --location-lat 37.8715 \
+  --location-lon -122.2730
+```
+
 Optional: enable CV-assisted XR checkpoint gating by running the Python CV service and setting:
 
 ```bash
@@ -58,6 +70,7 @@ Then start API with `npm run dev:api` and submit `cvSignal` with XR triage paylo
 ## Implemented Demo Features
 
 - CV person-down intake endpoint (`POST /api/cv/person-down`) with confidence-based questionnaire gating
+- Live CV summary pipeline (`run_webcam.py -> POST /api/cv/live-signal -> GET /api/cv/live-summary`) used by frontend
 - Human-in-the-loop questionnaire capture for pulse/breathing/responsiveness and scene notes
 - Backend emergency escalation flow (`POST /api/dispatch/requests`) that simulates 911-style escalation without calling 911
 - Pseudo-hospital dispatch dashboard queue:
@@ -87,6 +100,8 @@ Person-down + dispatch workflow APIs:
 
 - `POST /api/cv/person-down`
 - `GET /api/cv/person-down-events`
+- `POST /api/cv/live-signal`
+- `GET /api/cv/live-summary`
 - `POST /api/dispatch/requests`
 - `GET /api/dispatch/requests`
 - `GET /api/dispatch/requests/:requestId`

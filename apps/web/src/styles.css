@@ -60,6 +60,18 @@ body {
   font-size: 0.95rem;
 }
 
+.helper-text code {
+  display: block;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #eef8f2;
+  border: 1px solid #d7ebe0;
+  font-family: "SFMono-Regular", "Consolas", "Menlo", monospace;
+  font-size: 0.85rem;
+  word-break: break-word;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -146,6 +158,73 @@ textarea {
   border-radius: 10px;
   background: #f8fcf9;
   padding: 10px 12px;
+}
+
+.live-summary-card {
+  margin-top: 12px;
+  border: 1px solid #d7ebe0;
+  border-radius: 10px;
+  background: #f8fcf9;
+  padding: 10px 12px;
+}
+
+.live-summary-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.live-summary-header span {
+  color: #2d5a45;
+  font-size: 0.9rem;
+}
+
+.live-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.live-stats-grid > div {
+  background: #ffffff;
+  border: 1px solid #e3efe8;
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-label {
+  color: #406352;
+  font-size: 0.82rem;
+}
+
+.stat-value {
+  color: #133928;
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.stat-value.signal-person_down {
+  color: #8f1212;
+}
+
+.stat-value.signal-uncertain {
+  color: #9a5800;
+}
+
+.stat-value.signal-not_person_down {
+  color: #1f5c3f;
+}
+
+.summary-line {
+  margin: 10px 0 0;
+  color: #244d39;
+  font-size: 0.92rem;
 }
 
 .result-card.compact {

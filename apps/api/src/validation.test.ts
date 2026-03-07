@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isValidCvLiveSignalIngestRequest,
   isValidCreateDispatchRequest,
   isValidCreatePersonDownEventRequest,
   isValidAnswers,
@@ -208,6 +209,28 @@ test("isValidCreateDispatchRequest accepts valid questionnaire + location payloa
         source: "cv",
       },
       emergencyCallRequested: true,
+    }),
+    true,
+  );
+});
+
+test("isValidCvLiveSignalIngestRequest accepts valid live signal payload", () => {
+  assert.equal(
+    isValidCvLiveSignalIngestRequest({
+      signal: {
+        handPlacementStatus: "correct",
+        placementConfidence: 0.92,
+        compressionRateBpm: 108,
+        compressionRhythmQuality: "good",
+        visibility: "full",
+        frameTimestampMs: 1731009999,
+      },
+      sourceDeviceId: "cam-01",
+      location: {
+        label: "Main quad",
+        latitude: 37.8715,
+        longitude: -122.273,
+      },
     }),
     true,
   );

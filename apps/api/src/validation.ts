@@ -1,6 +1,7 @@
 import type {
   AedStatus,
   CreateDispatchRequest,
+  CvLiveSignalIngestRequest,
   CreatePersonDownEventRequest,
   CvCompressionRhythmQuality,
   CvHandPlacementStatus,
@@ -17,6 +18,7 @@ import type {
   UpdateIncidentRequest,
   XrDeviceContext,
   XrIncidentActionUpdateRequest,
+  XrCvSignalInput,
   XrTriageHookRequest,
 } from "@rescuesight/shared";
 
@@ -209,9 +211,9 @@ const isValidXrDeviceContext = (value: unknown): value is XrDeviceContext => {
   return true;
 };
 
-const isValidXrCvSignal = (
+export const isValidXrCvSignal = (
   value: unknown,
-): value is NonNullable<XrTriageHookRequest["cvSignal"]> => {
+): value is XrCvSignalInput => {
   if (!isObject(value)) {
     return false;
   }
@@ -362,6 +364,28 @@ export const isValidCreatePersonDownEventRequest = (
   }
 
   if (!isValidPersonDownSignal(value.signal)) {
+    return false;
+  }
+
+  if (value.location !== undefined && !isValidDispatchLocation(value.location)) {
+    return false;
+  }
+
+  if (value.sourceDeviceId !== undefined && typeof value.sourceDeviceId !== "string") {
+    return false;
+  }
+
+  return true;
+};
+
+export const isValidCvLiveSignalIngestRequest = (
+  value: unknown,
+): value is CvLiveSignalIngestRequest => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (!isValidXrCvSignal(value.signal)) {
     return false;
   }
 
@@ -653,6 +677,12 @@ export const personDownSignalPayloadShape = {
 
 export const createPersonDownEventPayloadShape = {
   signal: personDownSignalPayloadShape,
+  location: dispatchLocationPayloadShape,
+  sourceDeviceId: "string (optional)",
+};
+
+export const cvLiveSignalIngestPayloadShape = {
+  signal: xrTriageHookPayloadShape.cvSignal,
   location: dispatchLocationPayloadShape,
   sourceDeviceId: "string (optional)",
 };

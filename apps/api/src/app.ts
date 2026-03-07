@@ -2,9 +2,13 @@ import cors from "cors";
 import express, { type Request, type Response } from "express";
 import type {
   CreateDispatchRequest,
+  CvLiveSignalIngestRequest,
+  CvLiveSummary,
   CreatePersonDownEventRequest,
   DispatchRequestStatus,
+  PersonDownSignal,
   PersistIncidentRequest,
+  TriageAnswers,
   TriageEvaluationResponse,
   UpdateDispatchRequest,
   UpdateIncidentRequest,
@@ -21,8 +25,10 @@ import { InMemoryDispatchStore } from "./dispatchStore.js";
 import { InMemoryIncidentStore } from "./incidentStore.js";
 import {
   createDispatchRequestPayloadShape,
+  cvLiveSignalIngestPayloadShape,
   createPersonDownEventPayloadShape,
   isValidAnswers,
+  isValidCvLiveSignalIngestRequest,
   isValidCreateDispatchRequest,
   isValidCreatePersonDownEventRequest,
   isValidPersistIncidentRequest,
@@ -46,13 +52,156 @@ interface BuildAppOptions {
   cvEvaluator?: CvEvaluator | null;
 }
 
+const clamp = (value: number, min: number, max: number): number =>
+  Math.max(min, Math.min(max, value));
+
+const inferPersonDownSignalFromLiveCv = (
+  signal: CvLiveSignalIngestRequest["signal"],
+): PersonDownSignal => {
+  let confidence = 0;
+
+  if (signal.visibility === "full") {
+    confidence += 0.35;
+  } else if (signal.visibility === "partial") {
+    confidence += 0.2;
+  }
+
+  if (signal.handPlacementStatus !== "unknown") {
+    confidence += 0.25 * clamp(signal.placementConfidence, 0, 1);
+  }
+
+  if (signal.compressionRateBpm >= 70) {
+    confidence += 0.25;
+  }
+
+  if (signal.compressionRhythmQuality !== "unknown") {
+    confidence += 0.15;
+  }
+
+  if (signal.visibility === "poor") {
+    confidence = Math.min(confidence, 0.25);
+  }
+
+  const bounded = clamp(confidence, 0, 1);
+  const status: PersonDownSignal["status"] =
+    bounded >= 0.6 ? "person_down" : bounded <= 0.35 ? "not_person_down" : "uncertain";
+
+  return {
+    status,
+    confidence: Number(bounded.toFixed(3)),
+    source: "cv",
+    frameTimestampMs: signal.frameTimestampMs,
+    observedAtIso: new Date().toISOString(),
+  };
+};
+
+const buildLiveSummaryText = (
+  signal: CvLiveSignalIngestRequest["signal"],
+  personDownSignal: PersonDownSignal,
+): string =>
+  [
+    `Person-down: ${personDownSignal.status} (${personDownSignal.confidence.toFixed(2)})`,
+    `Placement: ${signal.handPlacementStatus} (${signal.placementConfidence.toFixed(2)})`,
+    `Compression: ${signal.compressionRateBpm} BPM (${signal.compressionRhythmQuality})`,
+    `Visibility: ${signal.visibility}`,
+  ].join(" | ");
+
+const inferPersonDownSignalFromTriageAnswers = (answers: TriageAnswers): PersonDownSignal => {
+  const personDownLikely = !answers.responsive && !answers.breathingNormal;
+  return {
+    status: personDownLikely ? "person_down" : "uncertain",
+    confidence: personDownLikely ? 0.82 : 0.55,
+    source: "manual",
+    observedAtIso: new Date().toISOString(),
+  };
+};
+
+const toDispatchQuestionnaireFromTriageAnswers = (
+  answers: TriageAnswers,
+  incidentId: string,
+): CreateDispatchRequest["questionnaire"] => {
+  const strokeSignsPresent =
+    answers.strokeSigns.faceDrooping ||
+    answers.strokeSigns.armWeakness ||
+    answers.strokeSigns.speechDifficulty;
+  const heartSignsPresent =
+    answers.heartRelatedSigns.chestDiscomfort ||
+    answers.heartRelatedSigns.shortnessOfBreath ||
+    answers.heartRelatedSigns.coldSweat ||
+    answers.heartRelatedSigns.nauseaOrUpperBodyDiscomfort;
+
+  const noteParts = [`XR incident ${incidentId}`];
+  if (strokeSignsPresent) {
+    noteParts.push("FAST signs reported");
+  }
+  if (heartSignsPresent) {
+    noteParts.push("heart-related warning signs reported");
+  }
+  const notes = noteParts.join(" | ");
+
+  return {
+    responsiveness: answers.responsive ? "responsive" : "unresponsive",
+    breathing: answers.breathingNormal ? "normal" : "abnormal_or_absent",
+    pulse: "unknown",
+    severeBleeding: false,
+    majorTrauma: false,
+    ...(notes ? { notes } : {}),
+  };
+};
+
+const resolveDispatchLocationForXr = (
+  latestSummary: CvLiveSummary | null,
+  payload: XrTriageHookRequest,
+): CreateDispatchRequest["location"] => {
+  if (latestSummary?.location) {
+    return { ...latestSummary.location };
+  }
+
+  const deviceLabel = payload.deviceContext?.deviceModel ?? "xr_session";
+  return {
+    label: `${deviceLabel} (location unavailable)`,
+    latitude: 0,
+    longitude: 0,
+    indoorDescriptor: "Location unavailable: stream /api/cv/live-signal for real coordinates.",
+  };
+};
+
+const buildXrDispatchContextNote = (
+  incidentId: string,
+  payload: XrTriageHookRequest,
+  triagePathway: string,
+  transitionGate: XrTransitionGate,
+  cvAssist?: XrCvAssist,
+): string => {
+  const parts = [
+    `XR HITL submission`,
+    `incident=${incidentId}`,
+    `pathway=${triagePathway}`,
+    `urgency_gate=${transitionGate.blocked ? "blocked" : "clear"}`,
+  ];
+
+  if (payload.deviceContext?.deviceModel) {
+    parts.push(`device=${payload.deviceContext.deviceModel}`);
+  }
+  if (payload.deviceContext?.interactionMode) {
+    parts.push(`mode=${payload.deviceContext.interactionMode}`);
+  }
+  if (cvAssist?.personDownHint.status) {
+    parts.push(`person_down_hint=${cvAssist.personDownHint.status}`);
+  }
+
+  return parts.join(" | ").slice(0, 4000);
+};
+
 export const buildApp = (options: BuildAppOptions = {}) => {
   const app = express();
   const incidentStore = options.incidentStore ?? new InMemoryIncidentStore();
   const dispatchStore = options.dispatchStore ?? new InMemoryDispatchStore();
   const cvEvaluator = options.cvEvaluator ?? createCvEvaluatorFromEnv();
   const cvAssistByIncident = new Map<string, XrCvAssist>();
+  const dispatchRequestIdByIncident = new Map<string, string>();
   const blockedCheckpointIdsByIncident = new Map<string, string[]>();
+  let latestCvLiveSummary: CvLiveSummary | null = null;
   const dispatchStatuses: DispatchRequestStatus[] = [
     "pending_review",
     "dispatched",
@@ -129,6 +278,43 @@ export const buildApp = (options: BuildAppOptions = {}) => {
 
   app.get("/health", (_req: Request, res: Response) => {
     res.json({ status: "ok", service: "rescuesight-api" });
+  });
+
+  app.post("/api/cv/live-signal", (req: Request, res: Response) => {
+    if (!isValidCvLiveSignalIngestRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid CV live-signal payload.",
+        expected: cvLiveSignalIngestPayloadShape,
+      });
+      return;
+    }
+
+    const payload = req.body as CvLiveSignalIngestRequest;
+    const personDownSignal = inferPersonDownSignalFromLiveCv(payload.signal);
+    latestCvLiveSummary = {
+      updatedAtIso: new Date().toISOString(),
+      signal: payload.signal,
+      personDownSignal,
+      summaryText: buildLiveSummaryText(payload.signal, personDownSignal),
+      safetyNotice:
+        "Live CV summary is assistive only and must be confirmed by a human responder.",
+      location: payload.location,
+      sourceDeviceId: payload.sourceDeviceId,
+    };
+
+    res.status(202).json({ summary: latestCvLiveSummary });
+  });
+
+  app.get("/api/cv/live-summary", (_req: Request, res: Response) => {
+    if (!latestCvLiveSummary) {
+      res.status(404).json({
+        error:
+          "No live CV summary available yet. Start run_webcam.py with --post-url and stream live signals.",
+      });
+      return;
+    }
+
+    res.json({ summary: latestCvLiveSummary });
   });
 
   app.post("/api/cv/person-down", (req: Request, res: Response) => {

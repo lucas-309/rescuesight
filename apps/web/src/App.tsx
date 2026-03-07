@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
   CreateDispatchRequest,
-  CreatePersonDownEventRequest,
+  CvLiveSummary,
+  DispatchLocation,
   DispatchRequest,
   DispatchRequestStatus,
-  PersonDownEvent,
 } from "@rescuesight/shared";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -28,21 +28,6 @@ const defaultAssignmentDraft: AssignmentDraft = {
   dispatchNotes: "",
 };
 
-const defaultCvInput: CreatePersonDownEventRequest = {
-  signal: {
-    status: "person_down",
-    confidence: 0.78,
-    source: "cv",
-  },
-  location: {
-    label: "",
-    latitude: 0,
-    longitude: 0,
-    indoorDescriptor: "",
-  },
-  sourceDeviceId: "quest3-kiosk-01",
-};
-
 const defaultDispatchQuestionnaire: CreateDispatchRequest["questionnaire"] = {
   responsiveness: "unresponsive",
   breathing: "abnormal_or_absent",
@@ -50,14 +35,6 @@ const defaultDispatchQuestionnaire: CreateDispatchRequest["questionnaire"] = {
   severeBleeding: false,
   majorTrauma: false,
   notes: "",
-};
-
-const defaultLocationForm = {
-  label: "",
-  latitude: "",
-  longitude: "",
-  indoorDescriptor: "",
-  accuracyMeters: "",
 };
 
 const statusOrder: DispatchRequestStatus[] = ["pending_review", "dispatched", "resolved"];
@@ -81,59 +58,70 @@ const formatDateTime = (value: string): string => {
   return parsed.toLocaleString();
 };
 
-const parseNumberOrNull = (value: string): number | null => {
-  if (!value.trim()) {
-    return null;
+const formatAgo = (value: string): string => {
+  const diffMs = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(diffMs) || diffMs < 0) {
+    return "just now";
   }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  const seconds = Math.floor(diffMs / 1000);
+  if (seconds < 60) {
+    return `${seconds}s ago`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
 };
 
 export const App = () => {
-  const [cvInput, setCvInput] = useState<CreatePersonDownEventRequest>(defaultCvInput);
-  const [locationForm, setLocationForm] = useState(defaultLocationForm);
   const [questionnaire, setQuestionnaire] = useState(defaultDispatchQuestionnaire);
-  const [latestCvEvent, setLatestCvEvent] = useState<PersonDownEvent | null>(null);
   const [latestDispatchRequest, setLatestDispatchRequest] = useState<DispatchRequest | null>(null);
+
+  const [liveSummary, setLiveSummary] = useState<CvLiveSummary | null>(null);
+  const [liveStatus, setLiveStatus] = useState<string | null>(null);
+
+  const [browserLocation, setBrowserLocation] = useState<DispatchLocation | null>(null);
 
   const [queue, setQueue] = useState<DispatchRequest[]>([]);
   const [queueFilter, setQueueFilter] = useState<DispatchRequestStatus | "all">("all");
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, AssignmentDraft>>({});
 
-  const [cvLoading, setCvLoading] = useState(false);
   const [dispatchLoading, setDispatchLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
 
-  const [cvStatus, setCvStatus] = useState<string | null>(null);
   const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
   const [queueStatus, setQueueStatus] = useState<string | null>(null);
 
-  const cvEventEndpoint = useMemo(() => toApiUrl("/api/cv/person-down"), []);
+  const liveSummaryEndpoint = useMemo(() => toApiUrl("/api/cv/live-summary"), []);
   const dispatchRequestsEndpoint = useMemo(() => toApiUrl("/api/dispatch/requests"), []);
 
   const getDraft = (requestId: string): AssignmentDraft =>
     assignmentDrafts[requestId] ?? defaultAssignmentDraft;
 
-  const parseLocationOrThrow = (): CreateDispatchRequest["location"] => {
-    const latitude = parseNumberOrNull(locationForm.latitude);
-    const longitude = parseNumberOrNull(locationForm.longitude);
+  const refreshLiveSummary = async () => {
+    try {
+      const response = await fetch(liveSummaryEndpoint);
+      if (response.status === 404) {
+        setLiveSummary(null);
+        setLiveStatus(
+          "No live CV stream yet. Start run_webcam.py with --post-url http://127.0.0.1:8080/api/cv/live-signal.",
+        );
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(`Live summary API returned ${response.status}`);
+      }
 
-    if (!locationForm.label.trim()) {
-      throw new Error("Location label is required.");
+      const payload = (await response.json()) as { summary: CvLiveSummary };
+      setLiveSummary(payload.summary);
+      setLiveStatus(`Live stream active from ${payload.summary.sourceDeviceId ?? "unknown device"}.`);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
+      setLiveSummary(null);
+      setLiveStatus(`Unable to load live CV summary: ${message}`);
     }
-    if (latitude === null || longitude === null) {
-      throw new Error("Latitude and longitude are required numeric values.");
-    }
-
-    const accuracyMeters = parseNumberOrNull(locationForm.accuracyMeters);
-
-    return {
-      label: locationForm.label.trim(),
-      latitude,
-      longitude,
-      indoorDescriptor: locationForm.indoorDescriptor.trim() || undefined,
-      accuracyMeters: accuracyMeters ?? undefined,
-    };
   };
 
   const refreshQueue = async (filter: DispatchRequestStatus | "all" = queueFilter) => {
@@ -163,6 +151,15 @@ export const App = () => {
 
   useEffect(() => {
     void refreshQueue("all");
+    void refreshLiveSummary();
+
+    const intervalId = window.setInterval(() => {
+      void refreshLiveSummary();
+    }, 1500);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -171,63 +168,25 @@ export const App = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queueFilter]);
 
-  const submitCvEvent = async () => {
-    setCvLoading(true);
-    setCvStatus(null);
-
-    try {
-      const location = parseLocationOrThrow();
-      const payload: CreatePersonDownEventRequest = {
-        ...cvInput,
-        location,
-        signal: {
-          ...cvInput.signal,
-          frameTimestampMs: Date.now(),
-        },
-      };
-
-      const response = await fetch(cvEventEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok) {
-        throw new Error(`CV event API returned ${response.status}`);
-      }
-
-      const body = (await response.json()) as { event: PersonDownEvent };
-      setLatestCvEvent(body.event);
-      setCvStatus(
-        body.event.questionnaireRequired
-          ? `Person-down event accepted (${body.event.id}). Questionnaire required before escalation.`
-          : `Event accepted (${body.event.id}). Continue monitoring and reassess if status changes.`,
-      );
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
-      setCvStatus(`Unable to submit CV person-down event: ${message}`);
-    } finally {
-      setCvLoading(false);
-    }
-  };
-
-  const requestBrowserLocation = () => {
+  const captureBrowserLocation = () => {
     if (!navigator.geolocation) {
-      setCvStatus("Browser geolocation is unavailable in this environment.");
+      setDispatchStatus("Browser geolocation is unavailable in this environment.");
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setLocationForm((current) => ({
-          ...current,
-          latitude: position.coords.latitude.toFixed(6),
-          longitude: position.coords.longitude.toFixed(6),
-          accuracyMeters: position.coords.accuracy.toFixed(1),
-        }));
-        setCvStatus("Browser location populated. Verify before submitting.");
+        const fallbackLocation: DispatchLocation = {
+          label: "Browser geolocation",
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracyMeters: Number(position.coords.accuracy.toFixed(1)),
+        };
+        setBrowserLocation(fallbackLocation);
+        setDispatchStatus("Browser geolocation captured for dispatch fallback.");
       },
       (error) => {
-        setCvStatus(`Location request failed: ${error.message}`);
+        setDispatchStatus(`Location request failed: ${error.message}`);
       },
       { timeout: 8_000 },
     );
@@ -238,18 +197,21 @@ export const App = () => {
     setDispatchStatus(null);
 
     try {
-      const location = parseLocationOrThrow();
-      const personDownSignal = latestCvEvent?.signal ?? {
-        status: cvInput.signal.status,
-        confidence: cvInput.signal.confidence,
-        source: cvInput.signal.source,
-        frameTimestampMs: Date.now(),
-      };
+      if (!liveSummary) {
+        throw new Error("No live CV summary available. Stream camera stats first.");
+      }
+
+      const location = liveSummary.location ?? browserLocation;
+      if (!location) {
+        throw new Error(
+          "No location is attached to the live stream. Add location args in run_webcam.py or capture browser geolocation.",
+        );
+      }
 
       const payload: CreateDispatchRequest = {
         questionnaire,
         location,
-        personDownSignal,
+        personDownSignal: liveSummary.personDownSignal,
         emergencyCallRequested: true,
       };
 
@@ -346,197 +308,92 @@ export const App = () => {
       <header className="hero">
         <h1>RescueSight Dispatch Workflow</h1>
         <p>
-          Demo flow: CV flags a possible person-down event, a bystander answers a short
-          questionnaire, and a backend dispatch request is queued for a pseudo-hospital dashboard.
+          Live camera stats are streamed from the CV pipeline. The UI reads that live summary,
+          then a human responder answers a short questionnaire before escalation.
         </p>
         <p className="hero-note">
-          Safety: assistive workflow only. Do not treat this as diagnosis or a replacement for real
-          emergency services.
+          Safety: assistive workflow only. This is not diagnosis and does not replace emergency
+          professionals.
         </p>
       </header>
 
       <section className="panel">
-        <h2>1) CV Person-Down Intake</h2>
+        <h2>1) Live CV Summary</h2>
         <p className="helper-text">
-          Submit a detection event. When confidence is high, the system requires human questionnaire
-          confirmation before escalation.
+          Start stream from webcam script:
+          <code> python run_webcam.py --post-url http://127.0.0.1:8080/api/cv/live-signal --source-device-id quest3-kiosk-01 --location-label "Main lobby" --location-lat 37.8715 --location-lon -122.2730</code>
         </p>
 
-        <div className="form-grid">
-          <label>
-            Detection status
-            <select
-              value={cvInput.signal.status}
-              onChange={(event) =>
-                setCvInput((current) => ({
-                  ...current,
-                  signal: {
-                    ...current.signal,
-                    status: event.target.value as CreatePersonDownEventRequest["signal"]["status"],
-                  },
-                }))
-              }
-            >
-              <option value="person_down">Person down</option>
-              <option value="uncertain">Uncertain</option>
-              <option value="not_person_down">Not person down</option>
-            </select>
-          </label>
+        {liveSummary ? (
+          <div className="live-summary-card">
+            <div className="live-summary-header">
+              <strong>{liveSummary.sourceDeviceId ?? "unknown device"}</strong>
+              <span>Updated {formatAgo(liveSummary.updatedAtIso)}</span>
+            </div>
 
-          <label>
-            Confidence ({cvInput.signal.confidence.toFixed(2)})
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={cvInput.signal.confidence}
-              onChange={(event) =>
-                setCvInput((current) => ({
-                  ...current,
-                  signal: {
-                    ...current.signal,
-                    confidence: Number(event.target.value),
-                  },
-                }))
-              }
-            />
-          </label>
+            <div className="live-stats-grid">
+              <div>
+                <span className="stat-label">Person-down</span>
+                <span className={`stat-value signal-${liveSummary.personDownSignal.status}`}>
+                  {liveSummary.personDownSignal.status} ({liveSummary.personDownSignal.confidence.toFixed(2)})
+                </span>
+              </div>
+              <div>
+                <span className="stat-label">Hand placement</span>
+                <span className="stat-value">
+                  {liveSummary.signal.handPlacementStatus} ({liveSummary.signal.placementConfidence.toFixed(2)})
+                </span>
+              </div>
+              <div>
+                <span className="stat-label">Compression BPM</span>
+                <span className="stat-value">{liveSummary.signal.compressionRateBpm}</span>
+              </div>
+              <div>
+                <span className="stat-label">Rhythm quality</span>
+                <span className="stat-value">{liveSummary.signal.compressionRhythmQuality}</span>
+              </div>
+              <div>
+                <span className="stat-label">Visibility</span>
+                <span className="stat-value">{liveSummary.signal.visibility}</span>
+              </div>
+              <div>
+                <span className="stat-label">Location</span>
+                <span className="stat-value">
+                  {liveSummary.location
+                    ? `${liveSummary.location.label} (${liveSummary.location.latitude.toFixed(5)}, ${liveSummary.location.longitude.toFixed(5)})`
+                    : "Not attached"}
+                </span>
+              </div>
+            </div>
 
-          <label>
-            Signal source
-            <select
-              value={cvInput.signal.source}
-              onChange={(event) =>
-                setCvInput((current) => ({
-                  ...current,
-                  signal: {
-                    ...current.signal,
-                    source: event.target.value as CreatePersonDownEventRequest["signal"]["source"],
-                  },
-                }))
-              }
-            >
-              <option value="cv">CV</option>
-              <option value="manual">Manual</option>
-              <option value="api">API</option>
-            </select>
-          </label>
-
-          <label>
-            Source device ID
-            <input
-              type="text"
-              value={cvInput.sourceDeviceId ?? ""}
-              onChange={(event) =>
-                setCvInput((current) => ({
-                  ...current,
-                  sourceDeviceId: event.target.value,
-                }))
-              }
-              placeholder="quest3-kiosk-01"
-            />
-          </label>
-
-          <label>
-            Location label
-            <input
-              type="text"
-              value={locationForm.label}
-              onChange={(event) =>
-                setLocationForm((current) => ({ ...current, label: event.target.value }))
-              }
-              placeholder="Main entrance"
-            />
-          </label>
-
-          <label>
-            Indoor descriptor
-            <input
-              type="text"
-              value={locationForm.indoorDescriptor}
-              onChange={(event) =>
-                setLocationForm((current) => ({
-                  ...current,
-                  indoorDescriptor: event.target.value,
-                }))
-              }
-              placeholder="Floor 1 - west lobby"
-            />
-          </label>
-
-          <label>
-            Latitude
-            <input
-              type="number"
-              step="0.000001"
-              value={locationForm.latitude}
-              onChange={(event) =>
-                setLocationForm((current) => ({ ...current, latitude: event.target.value }))
-              }
-            />
-          </label>
-
-          <label>
-            Longitude
-            <input
-              type="number"
-              step="0.000001"
-              value={locationForm.longitude}
-              onChange={(event) =>
-                setLocationForm((current) => ({ ...current, longitude: event.target.value }))
-              }
-            />
-          </label>
-
-          <label>
-            Accuracy (meters)
-            <input
-              type="number"
-              step="0.1"
-              value={locationForm.accuracyMeters}
-              onChange={(event) =>
-                setLocationForm((current) => ({
-                  ...current,
-                  accuracyMeters: event.target.value,
-                }))
-              }
-            />
-          </label>
-        </div>
-
-        <div className="actions-row">
-          <button type="button" className="action-button" disabled={cvLoading} onClick={submitCvEvent}>
-            {cvLoading ? "Submitting..." : "Submit CV Person-Down Event"}
-          </button>
-          <button type="button" className="action-button secondary" onClick={requestBrowserLocation}>
-            Use Browser Location
-          </button>
-        </div>
-
-        {latestCvEvent ? (
-          <div className="result-card">
-            <p>
-              Event ID: <strong>{latestCvEvent.id}</strong>
-            </p>
-            <p>
-              Questionnaire required: <strong>{latestCvEvent.questionnaireRequired ? "Yes" : "No"}</strong>
-            </p>
-            <p>
-              Recommended priority: <strong>{priorityLabelMap[latestCvEvent.recommendedPriority]}</strong>
-            </p>
-            <p className="safety-notice">{latestCvEvent.safetyNotice}</p>
+            <p className="summary-line">{liveSummary.summaryText}</p>
+            <p className="safety-notice">{liveSummary.safetyNotice}</p>
           </div>
         ) : null}
 
-        {cvStatus ? <p className="status-message">{cvStatus}</p> : null}
+        <div className="actions-row">
+          <button type="button" className="action-button secondary" onClick={() => void refreshLiveSummary()}>
+            Refresh Live Summary
+          </button>
+          <button type="button" className="action-button secondary" onClick={captureBrowserLocation}>
+            Capture Browser Location Fallback
+          </button>
+        </div>
+
+        {browserLocation ? (
+          <p className="helper-text">
+            Browser fallback: {browserLocation.latitude.toFixed(5)}, {browserLocation.longitude.toFixed(5)}
+          </p>
+        ) : null}
+
+        {liveStatus ? <p className="status-message">{liveStatus}</p> : null}
       </section>
 
       <section className="panel">
         <h2>2) Human-In-The-Loop Questionnaire</h2>
         <p className="helper-text">
-          Collect quick bystander observations before escalation. This action simulates a 911-like
-          call by posting to the backend dispatch queue.
+          Answer quick bystander checks. Escalation uses the latest live CV summary stats and
+          location data.
         </p>
 
         <div className="form-grid">

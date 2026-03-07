@@ -111,6 +111,52 @@ describe("RescueSight API routes", () => {
     assert.equal(body.service, "rescuesight-api");
   });
 
+  test("live CV signal ingestion and summary retrieval", async () => {
+    const noSummaryResponse = await fetch(`${baseUrl}/api/cv/live-summary`);
+    assert.equal(noSummaryResponse.status, 404);
+
+    const ingestResponse = await fetch(`${baseUrl}/api/cv/live-signal`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        signal: {
+          handPlacementStatus: "correct",
+          placementConfidence: 0.89,
+          compressionRateBpm: 106,
+          compressionRhythmQuality: "good",
+          visibility: "full",
+          frameTimestampMs: 1731001200,
+        },
+        sourceDeviceId: "cam-quest-01",
+        location: {
+          label: "Library atrium",
+          latitude: 37.8716,
+          longitude: -122.2727,
+        },
+      }),
+    });
+    assert.equal(ingestResponse.status, 202);
+    const ingestBody = (await ingestResponse.json()) as {
+      summary: { personDownSignal: { status: string; confidence: number }; summaryText: string };
+    };
+    assert.ok(ingestBody.summary.personDownSignal.confidence >= 0.6);
+    assert.equal(ingestBody.summary.personDownSignal.status, "person_down");
+    assert.match(ingestBody.summary.summaryText, /Person-down:/);
+
+    const summaryResponse = await fetch(`${baseUrl}/api/cv/live-summary`);
+    assert.equal(summaryResponse.status, 200);
+    const summaryBody = (await summaryResponse.json()) as {
+      summary: {
+        sourceDeviceId: string;
+        location?: { label: string };
+        signal: { compressionRateBpm: number };
+      };
+    };
+    assert.equal(summaryBody.summary.sourceDeviceId, "cam-quest-01");
+    assert.equal(summaryBody.summary.location?.label, "Library atrium");
+    assert.equal(summaryBody.summary.signal.compressionRateBpm, 106);
+  });
+
   test("POST /api/triage/evaluate returns pathway for valid payload", async () => {
     const response = await fetch(`${baseUrl}/api/triage/evaluate`, {
       method: "POST",
@@ -661,6 +707,18 @@ describe("RescueSight API routes", () => {
   });
 
   test("dispatch endpoints return 400 for invalid payloads and filters", async () => {
+    const invalidLiveSignal = await fetch(`${baseUrl}/api/cv/live-signal`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        signal: {
+          handPlacementStatus: "shift_left",
+          placementConfidence: "high",
+        },
+      }),
+    });
+    assert.equal(invalidLiveSignal.status, 400);
+
     const invalidCvEvent = await fetch(`${baseUrl}/api/cv/person-down`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
