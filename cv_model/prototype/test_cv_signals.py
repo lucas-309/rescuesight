@@ -4,6 +4,7 @@ import unittest
 
 from cv_signals import (
     BpmEstimator,
+    CprTargetStabilizer,
     classify_hand_placement,
     estimate_cpr_target,
 )
@@ -94,6 +95,70 @@ class TestCvSignals(unittest.TestCase):
         assert bpm is not None
         self.assertGreater(bpm, 123)
         self.assertEqual(quality, "too_fast")
+
+    def test_target_stabilizer_locks_and_holds_position(self) -> None:
+        target, confidence = estimate_cpr_target(_pose_with_centered_torso())
+        self.assertIsNotNone(target)
+        assert target is not None
+        self.assertGreater(confidence, 0.70)
+
+        stabilizer = CprTargetStabilizer(stable_frames_required=4)
+        final = None
+        for i in range(6):
+            jittered = type(target)(
+                center=type(target.center)(
+                    x=target.center.x + (0.003 if i % 2 == 0 else -0.003),
+                    y=target.center.y + (0.002 if i % 2 == 0 else -0.002),
+                ),
+                angleDeg=target.angleDeg + (1.5 if i % 2 == 0 else -1.5),
+                palmScale=target.palmScale * (1.0 + (0.02 if i % 2 == 0 else -0.02)),
+            )
+            final = stabilizer.update(jittered, 0.90)
+
+        self.assertIsNotNone(final)
+        assert final is not None
+        self.assertTrue(final.isLocked)
+        self.assertIsNotNone(final.target)
+        assert final.target is not None
+        locked_x = final.target.center.x
+        locked_y = final.target.center.y
+
+        # Large jitter should not move the lock immediately.
+        noisy_live = type(target)(
+            center=type(target.center)(x=locked_x + 0.015, y=locked_y - 0.015),
+            angleDeg=target.angleDeg + 8.0,
+            palmScale=target.palmScale * 1.10,
+        )
+        held = stabilizer.update(noisy_live, 0.88)
+        self.assertTrue(held.isLocked)
+        self.assertIsNotNone(held.target)
+        assert held.target is not None
+        self.assertAlmostEqual(held.target.center.x, locked_x, places=4)
+        self.assertAlmostEqual(held.target.center.y, locked_y, places=4)
+
+    def test_target_stabilizer_uses_fallback_then_unlocks(self) -> None:
+        target, _ = estimate_cpr_target(_pose_with_centered_torso())
+        self.assertIsNotNone(target)
+        assert target is not None
+
+        stabilizer = CprTargetStabilizer(stable_frames_required=2, max_fallback_frames=3)
+        stabilizer.update(target, 0.95)
+        locked = stabilizer.update(target, 0.95)
+        self.assertTrue(locked.isLocked)
+
+        # During short misses, lock should remain with fallback.
+        missing_1 = stabilizer.update(None, 0.0)
+        self.assertTrue(missing_1.isLocked)
+        self.assertTrue(missing_1.usingFallback)
+
+        missing_2 = stabilizer.update(None, 0.0)
+        self.assertTrue(missing_2.isLocked)
+
+        # Exceed fallback budget => unlock.
+        stabilizer.update(None, 0.0)
+        unlocked = stabilizer.update(None, 0.0)
+        self.assertFalse(unlocked.isLocked)
+        self.assertIsNone(unlocked.target)
 
 
 if __name__ == "__main__":

@@ -87,6 +87,40 @@ test("getIncident returns null for unknown id", () => {
   assert.equal(store.getIncident("missing-id"), null);
 });
 
+test("updateIncidentAssessment re-evaluates triage and merges timeline", () => {
+  const store = new InMemoryIncidentStore();
+  const created = store.createIncident(baseIncidentPayload());
+
+  const updated = store.updateIncidentAssessment(
+    created.id,
+    {
+      responsive: false,
+      breathingNormal: false,
+      strokeSigns: {
+        faceDrooping: false,
+        armWeakness: false,
+        speechDifficulty: false,
+      },
+      heartRelatedSigns: {
+        chestDiscomfort: false,
+        shortnessOfBreath: false,
+        coldSweat: false,
+        nauseaOrUpperBodyDiscomfort: false,
+      },
+    },
+    {
+      actionsTaken: {
+        emsCalled: true,
+      },
+    },
+  );
+
+  assert.ok(updated);
+  assert.equal(updated?.source, "xr");
+  assert.equal(updated?.evaluation.result.pathway, "possible_cardiac_arrest");
+  assert.equal(updated?.timeline.actionsTaken.emsCalled, true);
+});
+
 test("listIncidents returns all records", () => {
   const store = new InMemoryIncidentStore();
   const first = store.createIncident(baseIncidentPayload());

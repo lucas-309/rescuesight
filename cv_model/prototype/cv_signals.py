@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import asdict, dataclass
-from math import atan2, degrees, hypot
+from math import atan2, cos, degrees, hypot, radians, sin
 from statistics import mean, median, pstdev
 from time import time
 from typing import Optional, Sequence
@@ -43,6 +43,217 @@ class CprTarget:
     center: Point2D
     angleDeg: float
     palmScale: float
+
+
+@dataclass(frozen=True)
+class StabilizedCprTarget:
+    target: Optional[CprTarget]
+    confidence: float
+    isLocked: bool
+    usingFallback: bool
+
+
+class CprTargetStabilizer:
+    def __init__(
+        self,
+        max_fallback_frames: int = 12,
+        lock_conf_threshold: float = 0.58,
+        unlock_conf_threshold: float = 0.45,
+        stable_frames_required: int = 6,
+        jitter_tolerance: float = 0.045,
+        min_conf_for_tracking: float = 0.40,
+        recenter_frames_required: int = 8,
+        recenter_distance: float = 0.12,
+    ) -> None:
+        self.max_fallback_frames = max_fallback_frames
+        self.lock_conf_threshold = lock_conf_threshold
+        self.unlock_conf_threshold = unlock_conf_threshold
+        self.stable_frames_required = stable_frames_required
+        self.jitter_tolerance = jitter_tolerance
+        self.min_conf_for_tracking = min_conf_for_tracking
+        self.recenter_frames_required = recenter_frames_required
+        self.recenter_distance = recenter_distance
+
+        self._locked_target: Optional[CprTarget] = None
+        self._locked_confidence = 0.0
+        self._miss_frames = 0
+
+        self._candidate_samples: deque[tuple[CprTarget, float]] = deque(maxlen=24)
+        self._recenter_samples: deque[tuple[CprTarget, float]] = deque(maxlen=24)
+
+    def update(
+        self,
+        live_target: Optional[CprTarget],
+        live_confidence: float,
+    ) -> StabilizedCprTarget:
+        if live_target is None:
+            return self._update_missing_target()
+
+        self._miss_frames = 0
+
+        if self._locked_target is not None:
+            return self._update_locked_target(live_target, live_confidence)
+
+        return self._update_lock_candidate(live_target, live_confidence)
+
+    def _update_missing_target(self) -> StabilizedCprTarget:
+        self._candidate_samples.clear()
+        self._recenter_samples.clear()
+
+        if self._locked_target is None:
+            return StabilizedCprTarget(
+                target=None,
+                confidence=0.0,
+                isLocked=False,
+                usingFallback=False,
+            )
+
+        self._miss_frames += 1
+        if self._miss_frames > self.max_fallback_frames:
+            self._reset_lock()
+            return StabilizedCprTarget(
+                target=None,
+                confidence=0.0,
+                isLocked=False,
+                usingFallback=False,
+            )
+
+        decayed_conf = max(self.unlock_conf_threshold, self._locked_confidence - 0.03 * self._miss_frames)
+        return StabilizedCprTarget(
+            target=self._locked_target,
+            confidence=decayed_conf,
+            isLocked=True,
+            usingFallback=True,
+        )
+
+    def _update_lock_candidate(
+        self,
+        live_target: CprTarget,
+        live_confidence: float,
+    ) -> StabilizedCprTarget:
+        if live_confidence < self.min_conf_for_tracking:
+            self._candidate_samples.clear()
+            return StabilizedCprTarget(
+                target=None,
+                confidence=0.0,
+                isLocked=False,
+                usingFallback=False,
+            )
+
+        self._candidate_samples.append((live_target, live_confidence))
+        smoothed_target, avg_conf, jitter = self._aggregate_samples(self._candidate_samples)
+
+        if (
+            len(self._candidate_samples) >= self.stable_frames_required
+            and avg_conf >= self.lock_conf_threshold
+            and jitter <= self.jitter_tolerance
+        ):
+            self._locked_target = smoothed_target
+            self._locked_confidence = avg_conf
+            self._candidate_samples.clear()
+            return StabilizedCprTarget(
+                target=self._locked_target,
+                confidence=self._locked_confidence,
+                isLocked=True,
+                usingFallback=False,
+            )
+
+        # Pre-lock output is smoothed to reduce wobble while converging.
+        return StabilizedCprTarget(
+            target=smoothed_target,
+            confidence=avg_conf,
+            isLocked=False,
+            usingFallback=False,
+        )
+
+    def _update_locked_target(self, live_target: CprTarget, live_confidence: float) -> StabilizedCprTarget:
+        assert self._locked_target is not None
+
+        if live_confidence < self.unlock_conf_threshold:
+            self._recenter_samples.clear()
+            return StabilizedCprTarget(
+                target=self._locked_target,
+                confidence=self._locked_confidence,
+                isLocked=True,
+                usingFallback=True,
+            )
+
+        live_displacement = distance(self._locked_target.center, live_target.center)
+        if live_displacement <= self.recenter_distance * 0.55:
+            self._recenter_samples.clear()
+            self._locked_confidence = max(self._locked_confidence * 0.90, live_confidence)
+            return StabilizedCprTarget(
+                target=self._locked_target,
+                confidence=self._locked_confidence,
+                isLocked=True,
+                usingFallback=False,
+            )
+
+        # Potential true shift: only re-lock after stable high-confidence drift.
+        if live_confidence >= self.lock_conf_threshold:
+            self._recenter_samples.append((live_target, live_confidence))
+        else:
+            self._recenter_samples.clear()
+
+        if len(self._recenter_samples) >= self.recenter_frames_required:
+            recentered_target, recentered_conf, recentered_jitter = self._aggregate_samples(
+                self._recenter_samples
+            )
+            drift_from_lock = distance(self._locked_target.center, recentered_target.center)
+            if (
+                recentered_conf >= self.lock_conf_threshold
+                and recentered_jitter <= self.jitter_tolerance * 1.25
+                and drift_from_lock >= self.recenter_distance
+            ):
+                self._locked_target = recentered_target
+                self._locked_confidence = recentered_conf
+                self._recenter_samples.clear()
+            elif recentered_jitter > self.jitter_tolerance * 1.8:
+                self._recenter_samples.clear()
+
+        return StabilizedCprTarget(
+            target=self._locked_target,
+            confidence=max(self._locked_confidence, live_confidence),
+            isLocked=True,
+            usingFallback=False,
+        )
+
+    @staticmethod
+    def _aggregate_samples(
+        samples: Sequence[tuple[CprTarget, float]]
+    ) -> tuple[CprTarget, float, float]:
+        weights = [max(0.15, conf) for _, conf in samples]
+        total_weight = sum(weights)
+        if total_weight <= 0:
+            total_weight = float(len(samples))
+
+        avg_x = sum(target.center.x * w for (target, _), w in zip(samples, weights)) / total_weight
+        avg_y = sum(target.center.y * w for (target, _), w in zip(samples, weights)) / total_weight
+
+        sin_sum = sum(sin(radians(target.angleDeg)) * w for (target, _), w in zip(samples, weights))
+        cos_sum = sum(cos(radians(target.angleDeg)) * w for (target, _), w in zip(samples, weights))
+        avg_angle = degrees(atan2(sin_sum, cos_sum)) if (sin_sum != 0.0 or cos_sum != 0.0) else 0.0
+
+        avg_scale = sum(target.palmScale * w for (target, _), w in zip(samples, weights)) / total_weight
+        avg_conf = sum(conf for _, conf in samples) / len(samples)
+
+        aggregate_target = CprTarget(
+            center=Point2D(
+                x=avg_x,
+                y=avg_y,
+            ),
+            angleDeg=avg_angle,
+            palmScale=avg_scale,
+        )
+        jitter = median([distance(target.center, aggregate_target.center) for target, _ in samples])
+        return aggregate_target, avg_conf, jitter
+
+    def _reset_lock(self) -> None:
+        self._locked_target = None
+        self._locked_confidence = 0.0
+        self._miss_frames = 0
+        self._candidate_samples.clear()
+        self._recenter_samples.clear()
 
 
 class BpmEstimator:

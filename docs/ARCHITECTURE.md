@@ -31,6 +31,7 @@ Responsibilities:
 - Validate triage payloads
 - Execute deterministic triage routing logic
 - Return pathway result with urgency and action steps
+- Map triage output to XR overlay steps for Unity/Quest clients
 - Persist incident timeline/handoff records in in-memory store
 - Expose incident retrieval and handoff payload endpoints
 
@@ -38,6 +39,8 @@ Current endpoints:
 - `GET /health`
 - `GET /api/triage/questions`
 - `POST /api/triage/evaluate`
+- `POST /api/xr/triage`
+- `GET /api/xr/incidents/:incidentId/overlay`
 - `POST /api/incidents`
 - `GET /api/incidents`
 - `GET /api/incidents/:incidentId`
@@ -62,6 +65,15 @@ Responsibilities:
 7. Web app persists incident timeline/handoff data via incident endpoints.
 8. API stores incident record and supports later retrieval/update.
 
+## XR Hook Flow (Quest 3 / Unity)
+
+1. Unity app collects confirmed triage answers.
+2. Unity posts to `POST /api/xr/triage` with optional `incidentId`.
+3. API creates or re-evaluates the incident and returns overlay-ready steps.
+4. Unity renders `overlaySteps` as head/world-locked instruction cards.
+5. Unity syncs action confirmations using `PATCH /api/incidents/:incidentId`.
+6. Unity can recover state after reconnect through `GET /api/xr/incidents/:incidentId/overlay`.
+
 ## Triage Rules (Current)
 
 - If unresponsive + not breathing normally -> `possible_cardiac_arrest`
@@ -72,7 +84,7 @@ Responsibilities:
 ## Planned Extensions
 
 - CV service: person-down and hand-placement hints (user-confirmed)
-- XR overlay adapter: place instructions in headset view
+- XR overlay adapter: initial API hooks implemented, Unity rendering integration ongoing
 - RAG assistant: constrained retrieval of emergency instruction content
 - MCP tool layer: orchestrate demo tools and protocol retrieval
 

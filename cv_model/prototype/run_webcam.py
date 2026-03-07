@@ -15,6 +15,7 @@ from mediapipe.tasks.python import vision as mp_vision
 
 from cv_signals import (
     BpmEstimator,
+    CprTargetStabilizer,
     CprTarget,
     CVSignal,
     Point2D,
@@ -161,13 +162,19 @@ def draw_cpr_hand_target(
     frame: np.ndarray,
     target: CprTarget,
     using_fallback: bool,
+    is_locked: bool,
 ) -> None:
     frame_h, frame_w = frame.shape[:2]
     min_dim = min(frame_w, frame_h)
     center_px = (int(target.center.x * frame_w), int(target.center.y * frame_h))
     scale_px = max(18, int(target.palmScale * min_dim))
 
-    fill_color = (0, 205, 105) if not using_fallback else (0, 170, 235)
+    if is_locked:
+        fill_color = (20, 215, 95)
+    elif using_fallback:
+        fill_color = (0, 170, 235)
+    else:
+        fill_color = (0, 205, 105)
     edge_color = (255, 255, 255)
 
     overlay = frame.copy()
@@ -188,7 +195,14 @@ def draw_cpr_hand_target(
     cv2.circle(overlay, thumb_px, max(4, int(scale_px * 0.20)), edge_color, 1)
 
     cv2.addWeighted(overlay, 0.52, frame, 0.48, 0.0, frame)
-    label = "CPR target" if not using_fallback else "CPR target (fallback)"
+    if is_locked and using_fallback:
+        label = "CPR target (locked/fallback)"
+    elif is_locked:
+        label = "CPR target (locked)"
+    elif using_fallback:
+        label = "CPR target (fallback)"
+    else:
+        label = "CPR target"
     cv2.putText(
         frame,
         label,
@@ -210,8 +224,7 @@ def main() -> int:
         return 1
 
     bpm_estimator = BpmEstimator()
-    last_target: Optional[CprTarget] = None
-    fallback_frames = 0
+    target_stabilizer = CprTargetStabilizer(max_fallback_frames=args.max_fallback_frames)
     last_json_print_ms = 0
 
     model_dir = Path(args.model_dir)
@@ -235,25 +248,13 @@ def main() -> int:
             live_target, chest_conf = estimate_cpr_target(
                 pose_result.pose_landmarks[0] if pose_result.pose_landmarks else None
             )
-
-            using_chest_fallback = False
-            chest_target = live_target
-            if live_target is not None:
-                last_target = live_target
-                fallback_frames = 0
-            elif last_target is not None and fallback_frames < args.max_fallback_frames:
-                chest_target = last_target
-                chest_conf = max(chest_conf, 0.45)
-                using_chest_fallback = True
-                fallback_frames += 1
-            else:
-                chest_target = None
-                chest_conf = 0.0
-                fallback_frames += 1
+            stabilized_target = target_stabilizer.update(live_target, chest_conf)
+            chest_target = stabilized_target.target
+            using_chest_fallback = stabilized_target.usingFallback
 
             chest_center = chest_target.center if chest_target is not None else None
             hand_center, wrist_y, hand_conf = select_primary_hand(hands_result, chest_center)
-            placement_conf = min(chest_conf, hand_conf)
+            placement_conf = min(stabilized_target.confidence, hand_conf)
             placement_status = classify_hand_placement(
                 hand_center,
                 chest_center,
@@ -279,7 +280,12 @@ def main() -> int:
 
             frame_h, frame_w = frame.shape[:2]
             if chest_target is not None:
-                draw_cpr_hand_target(frame, chest_target, using_chest_fallback)
+                draw_cpr_hand_target(
+                    frame,
+                    chest_target,
+                    using_chest_fallback,
+                    stabilized_target.isLocked,
+                )
 
             if hand_center is not None:
                 hand_px = (int(hand_center.x * frame_w), int(hand_center.y * frame_h))
@@ -301,6 +307,7 @@ def main() -> int:
                 f"bpm: {signal.compressionRateBpm}",
                 f"rhythm: {signal.compressionRhythmQuality}",
                 f"visibility: {signal.visibility}",
+                f"target_lock: {'locked' if stabilized_target.isLocked else 'tracking'}",
                 "press 'q' to quit",
             ]:
                 cv2.putText(

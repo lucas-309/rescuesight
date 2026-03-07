@@ -4,17 +4,22 @@ import type {
   PersistIncidentRequest,
   TriageEvaluationResponse,
   UpdateIncidentRequest,
+  XrTriageHookRequest,
+  XrTriageHookResponse,
 } from "@rescuesight/shared";
 import { InMemoryIncidentStore } from "./incidentStore.js";
 import {
   isValidAnswers,
   isValidPersistIncidentRequest,
   isValidUpdateIncidentRequest,
+  isValidXrTriageHookRequest,
   persistIncidentPayloadShape,
   triagePayloadShape,
   updateIncidentPayloadShape,
+  xrTriageHookPayloadShape,
 } from "./validation.js";
 import { evaluateTriage } from "./triageEngine.js";
+import { buildXrIncidentOverlayResponse, buildXrOverlaySteps } from "./xrHooks.js";
 
 interface BuildAppOptions {
   incidentStore?: InMemoryIncidentStore;
@@ -63,6 +68,56 @@ export const buildApp = (options: BuildAppOptions = {}) => {
     };
 
     res.json(payload);
+  });
+
+  app.post("/api/xr/triage", (req: Request, res: Response) => {
+    if (!isValidXrTriageHookRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid XR triage hook payload.",
+        expected: xrTriageHookPayloadShape,
+      });
+      return;
+    }
+
+    const payload = req.body as XrTriageHookRequest;
+    const incident = payload.incidentId
+      ? incidentStore.updateIncidentAssessment(
+          payload.incidentId,
+          payload.answers,
+          payload.timeline,
+        )
+      : incidentStore.createIncident({
+          answers: payload.answers,
+          timeline: payload.timeline,
+          source: "xr",
+        });
+
+    if (!incident) {
+      res.status(404).json({ error: "Incident not found." });
+      return;
+    }
+
+    const response: XrTriageHookResponse = {
+      incidentId: incident.id,
+      triage: incident.evaluation,
+      overlaySteps: buildXrOverlaySteps(incident.evaluation.result, incident.timeline),
+      cprGuidance: incident.evaluation.result.cprGuidance,
+      timeline: incident.timeline,
+      safetyNotice: incident.evaluation.result.safetyNotice,
+    };
+
+    res.json(response);
+  });
+
+  app.get("/api/xr/incidents/:incidentId/overlay", (req: Request, res: Response) => {
+    const incident = incidentStore.getIncident(req.params.incidentId);
+
+    if (!incident) {
+      res.status(404).json({ error: "Incident not found." });
+      return;
+    }
+
+    res.json(buildXrIncidentOverlayResponse(incident));
   });
 
   app.post("/api/incidents", (req: Request, res: Response) => {

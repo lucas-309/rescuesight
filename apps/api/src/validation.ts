@@ -6,6 +6,8 @@ import type {
   PersistIncidentRequest,
   TriageAnswers,
   UpdateIncidentRequest,
+  XrDeviceContext,
+  XrTriageHookRequest,
 } from "@rescuesight/shared";
 
 const INCIDENT_ACTION_KEYS: IncidentActionKey[] = [
@@ -25,6 +27,16 @@ const AED_STATUS_VALUES: AedStatus[] = [
 
 const INCIDENT_STATUS_VALUES: IncidentStatus[] = ["open", "closed"];
 const INCIDENT_SOURCE_VALUES: PersistIncidentRequest["source"][] = ["web", "xr", "api"];
+const XR_DEVICE_MODEL_VALUES: NonNullable<XrDeviceContext["deviceModel"]>[] = [
+  "meta_quest_3",
+  "meta_quest_3s",
+  "unknown",
+];
+const XR_INTERACTION_MODE_VALUES: NonNullable<XrDeviceContext["interactionMode"]>[] = [
+  "controllers",
+  "hands",
+  "mixed",
+];
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -100,6 +112,42 @@ const isValidTimelineInput = (value: unknown): value is IncidentTimelineInput =>
   return true;
 };
 
+const isValidXrDeviceContext = (value: unknown): value is XrDeviceContext => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (value.deviceModel !== undefined) {
+    if (
+      typeof value.deviceModel !== "string" ||
+      !XR_DEVICE_MODEL_VALUES.includes(value.deviceModel as NonNullable<XrDeviceContext["deviceModel"]>)
+    ) {
+      return false;
+    }
+  }
+
+  if (value.interactionMode !== undefined) {
+    if (
+      typeof value.interactionMode !== "string" ||
+      !XR_INTERACTION_MODE_VALUES.includes(
+        value.interactionMode as NonNullable<XrDeviceContext["interactionMode"]>,
+      )
+    ) {
+      return false;
+    }
+  }
+
+  if (value.appVersion !== undefined && typeof value.appVersion !== "string") {
+    return false;
+  }
+
+  if (value.unityVersion !== undefined && typeof value.unityVersion !== "string") {
+    return false;
+  }
+
+  return true;
+};
+
 export const isValidPersistIncidentRequest = (
   value: unknown,
 ): value is PersistIncidentRequest => {
@@ -157,6 +205,32 @@ export const isValidUpdateIncidentRequest = (
   return true;
 };
 
+export const isValidXrTriageHookRequest = (
+  value: unknown,
+): value is XrTriageHookRequest => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (!isValidAnswers(value.answers)) {
+    return false;
+  }
+
+  if (value.incidentId !== undefined && typeof value.incidentId !== "string") {
+    return false;
+  }
+
+  if (value.timeline !== undefined && !isValidTimelineInput(value.timeline)) {
+    return false;
+  }
+
+  if (value.deviceContext !== undefined && !isValidXrDeviceContext(value.deviceContext)) {
+    return false;
+  }
+
+  return true;
+};
+
 export const triagePayloadShape = {
   responsive: "boolean",
   breathingNormal: "boolean",
@@ -195,4 +269,16 @@ export const updateIncidentPayloadShape = {
   timeline: persistIncidentPayloadShape.timeline,
   handoffSummary: "string (optional)",
   status: "open | closed (optional)",
+};
+
+export const xrTriageHookPayloadShape = {
+  answers: triagePayloadShape,
+  incidentId: "string (optional)",
+  timeline: persistIncidentPayloadShape.timeline,
+  deviceContext: {
+    deviceModel: "meta_quest_3 | meta_quest_3s | unknown (optional)",
+    interactionMode: "controllers | hands | mixed (optional)",
+    appVersion: "string (optional)",
+    unityVersion: "string (optional)",
+  },
 };

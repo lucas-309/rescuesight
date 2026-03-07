@@ -11,6 +11,7 @@ This is the Day 1 hackathon scaffold for CV signals using pre-trained MediaPipe 
 - Estimates compression BPM and rhythm quality from wrist motion.
 - Applies partial-visibility fallback for short torso occlusions.
 - Renders a hand-shaped target overlay (instead of a dot) to indicate where to perform CPR.
+- Uses confidence-based lock-on: after stable high-confidence frames, CPR target stays locked to reduce wobble.
 
 ## Setup
 

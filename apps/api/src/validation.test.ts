@@ -4,6 +4,7 @@ import {
   isValidAnswers,
   isValidPersistIncidentRequest,
   isValidUpdateIncidentRequest,
+  isValidXrTriageHookRequest,
 } from "./validation.js";
 
 const validAnswers = {
@@ -75,6 +76,39 @@ test("isValidUpdateIncidentRequest rejects invalid status value", () => {
   assert.equal(
     isValidUpdateIncidentRequest({
       status: "archived",
+    }),
+    false,
+  );
+});
+
+test("isValidXrTriageHookRequest accepts valid quest payload", () => {
+  assert.equal(
+    isValidXrTriageHookRequest({
+      answers: validAnswers,
+      incidentId: "incident-123",
+      timeline: {
+        actionsTaken: {
+          emsCalled: true,
+        },
+      },
+      deviceContext: {
+        deviceModel: "meta_quest_3",
+        interactionMode: "hands",
+        appVersion: "0.1.0",
+        unityVersion: "6000.3.10f1",
+      },
+    }),
+    true,
+  );
+});
+
+test("isValidXrTriageHookRequest rejects invalid device context values", () => {
+  assert.equal(
+    isValidXrTriageHookRequest({
+      answers: validAnswers,
+      deviceContext: {
+        deviceModel: "quest-pro",
+      },
     }),
     false,
   );

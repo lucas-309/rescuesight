@@ -9,12 +9,14 @@ This project is intentionally positioned as decision support, not diagnosis.
 - `apps/web`: React + Vite + TypeScript triage UI
 - `apps/api`: Express + TypeScript triage decision engine API
 - `packages/shared`: shared domain types
+- `docs/unity`: Quest 3 Unity hook scripts and integration notes
 
 ## Repository Layout
 
 - `INSTRUCTIONS.md`: product intent, safety constraints, and scope
 - `IMPLEMENTATION_README.md`: implementation plan + ongoing work log
 - `docs/ARCHITECTURE.md`: technical architecture and module boundaries
+- `docs/unity/QUEST3_UNITY_INTEGRATION.md`: Quest 3 + Unity hook setup
 - `apps/web`: frontend app
 - `apps/api`: backend app
 - `packages/shared`: shared interfaces and enums
@@ -76,6 +78,8 @@ npm run dev:web
 - `GET /health`
 - `GET /api/triage/questions`
 - `POST /api/triage/evaluate`
+- `POST /api/xr/triage`
+- `GET /api/xr/incidents/:incidentId/overlay`
 - `POST /api/incidents`
 - `GET /api/incidents`
 - `GET /api/incidents/:incidentId`

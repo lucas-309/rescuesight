@@ -67,7 +67,8 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
 - [ ] Add MCP-compatible tool layer for internal orchestration
 
 ### Phase 4: XR/CV integration track
-- [ ] Define XR overlay contract (anchor, instruction, confidence, user-confirmed)
+- [x] Define initial XR overlay contract (anchor, instruction, priority, user-confirmed)
+- [x] Add XR hook endpoints for Unity/Quest clients
 - [ ] Stub CV detection service for person-down and hand-placement hints
 - [ ] Add explicit confirmation checkpoints before advancing critical steps
 
@@ -81,7 +82,7 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
 ## Risks / Open Questions
 
 - Clinical accuracy is not validated; all outputs must remain advisory.
-- Exact XR device selection is pending and will affect overlay implementation details.
+- Meta Quest 3 has been selected; remaining unknowns are final Unity scene UX and deployment networking.
 - Automatic 911 calling remains exploratory and out of production scope.
 
 ## Work Log
@@ -129,10 +130,22 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
   - `npm run typecheck`
   - `npm run test:api`
   - `npm run build`
+- Began Quest 3 Unity hook implementation:
+  - added shared XR hook contracts in `packages/shared/src/xr.ts`
+  - added API XR endpoints:
+    - `POST /api/xr/triage`
+    - `GET /api/xr/incidents/:incidentId/overlay`
+  - added API-side overlay step mapper from deterministic triage output
+  - added incident store support for re-evaluating an existing XR incident
+  - added validation and integration tests for XR hook flows
+  - added Unity C# hook scripts:
+    - `docs/unity/RescueSightApiClient.cs`
+    - `docs/unity/RescueSightQuest3HooksExample.cs`
+  - documented Quest 3 Unity integration in `docs/unity/QUEST3_UNITY_INTEGRATION.md`
 
 ## Next Planned Steps (Immediate)
 
-1. Add frontend validation hints for required escalation fields before handoff export.
-2. Add optional durable persistence adapter (file/db) behind the incident store interface.
-3. Start Phase 3 RAG scaffolding with strict safety filters.
-4. Add initial MCP tool orchestration skeleton.
+1. Move Unity hook scripts from `docs/unity` into a dedicated Unity project (`apps/unity`) and wire scene UI components.
+2. Add simple auth/token guard for XR endpoints before multi-device demos.
+3. Add optional durable persistence adapter (file/db) behind the incident store interface.
+4. Start Phase 3 RAG scaffolding with strict safety filters.

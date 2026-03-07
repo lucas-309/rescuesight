@@ -183,6 +183,115 @@ describe("RescueSight API routes", () => {
     assert.equal(handoffBody.timeline.aedStatus, "on_scene");
   });
 
+  test("xr hooks create/update triage state and expose overlay view", async () => {
+    const createResponse = await fetch(`${baseUrl}/api/xr/triage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        answers: {
+          ...baseAnswers,
+          responsive: false,
+          breathingNormal: false,
+        },
+        deviceContext: {
+          deviceModel: "meta_quest_3",
+          interactionMode: "hands",
+          appVersion: "0.1.0",
+          unityVersion: "6000.3.10f1",
+        },
+      }),
+    });
+
+    assert.equal(createResponse.status, 200);
+    const createdBody = (await createResponse.json()) as {
+      incidentId: string;
+      triage: { result: { pathway: string; cprGuidance?: { targetBpmRange: [number, number] } } };
+      overlaySteps: Array<{ id: string; source: string; priority: string }>;
+    };
+
+    assert.ok(createdBody.incidentId);
+    assert.equal(createdBody.triage.result.pathway, "possible_cardiac_arrest");
+    assert.deepEqual(createdBody.triage.result.cprGuidance?.targetBpmRange, [100, 120]);
+    assert.ok(createdBody.overlaySteps.some((step) => step.source === "cpr"));
+    assert.ok(createdBody.overlaySteps.some((step) => step.priority === "critical"));
+
+    const updateResponse = await fetch(`${baseUrl}/api/xr/triage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        incidentId: createdBody.incidentId,
+        answers: {
+          ...baseAnswers,
+          strokeSigns: {
+            faceDrooping: true,
+            armWeakness: false,
+            speechDifficulty: false,
+          },
+        },
+        timeline: {
+          actionsTaken: {
+            emsCalled: true,
+          },
+        },
+      }),
+    });
+
+    assert.equal(updateResponse.status, 200);
+    const updatedBody = (await updateResponse.json()) as {
+      incidentId: string;
+      triage: { result: { pathway: string } };
+      timeline: { actionsTaken: { emsCalled: boolean } };
+    };
+
+    assert.equal(updatedBody.incidentId, createdBody.incidentId);
+    assert.equal(updatedBody.triage.result.pathway, "suspected_stroke");
+    assert.equal(updatedBody.timeline.actionsTaken.emsCalled, true);
+
+    const overlayResponse = await fetch(
+      `${baseUrl}/api/xr/incidents/${createdBody.incidentId}/overlay`,
+    );
+    assert.equal(overlayResponse.status, 200);
+    const overlayBody = (await overlayResponse.json()) as {
+      incidentId: string;
+      overlaySteps: Array<{ linkedAction?: string; completed?: boolean }>;
+    };
+
+    assert.equal(overlayBody.incidentId, createdBody.incidentId);
+    assert.ok(
+      overlayBody.overlaySteps.some(
+        (step) => step.linkedAction === "emsCalled" && step.completed === true,
+      ),
+    );
+  });
+
+  test("xr hook endpoint returns 400 for invalid payload and 404 for unknown incident id", async () => {
+    const invalidResponse = await fetch(`${baseUrl}/api/xr/triage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        answers: {
+          responsive: true,
+        },
+      }),
+    });
+    assert.equal(invalidResponse.status, 400);
+
+    const missingIncidentResponse = await fetch(`${baseUrl}/api/xr/triage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        incidentId: "missing-incident-id",
+        answers: baseAnswers,
+      }),
+    });
+    assert.equal(missingIncidentResponse.status, 404);
+
+    const missingOverlayResponse = await fetch(
+      `${baseUrl}/api/xr/incidents/missing-incident-id/overlay`,
+    );
+    assert.equal(missingOverlayResponse.status, 404);
+  });
+
   test("incident endpoints return 400 for invalid payloads", async () => {
     const createResponse = await fetch(`${baseUrl}/api/incidents`, {
       method: "POST",

@@ -5,6 +5,7 @@ import type {
   IncidentTimeline,
   IncidentTimelineInput,
   PersistIncidentRequest,
+  TriageAnswers,
   TriageEvaluationResponse,
   UpdateIncidentRequest,
 } from "@rescuesight/shared";
@@ -176,6 +177,34 @@ export class InMemoryIncidentStore {
           ? sanitizeHandoffSummary(update.handoffSummary)
           : existing.handoffSummary,
       timeline: mergeTimeline(existing.timeline, update.timeline),
+    };
+
+    this.incidents.set(id, next);
+    return copyIncident(next);
+  }
+
+  updateIncidentAssessment(
+    id: string,
+    answers: TriageAnswers,
+    timeline?: IncidentTimelineInput,
+  ): IncidentRecord | null {
+    const existing = this.incidents.get(id);
+    if (!existing) {
+      return null;
+    }
+
+    const nowIso = new Date().toISOString();
+    const next: IncidentRecord = {
+      ...existing,
+      updatedAtIso: nowIso,
+      source: "xr",
+      answers: {
+        ...answers,
+        strokeSigns: { ...answers.strokeSigns },
+        heartRelatedSigns: { ...answers.heartRelatedSigns },
+      },
+      evaluation: createEvaluation(answers, nowIso),
+      timeline: mergeTimeline(existing.timeline, timeline),
     };
 
     this.incidents.set(id, next);
