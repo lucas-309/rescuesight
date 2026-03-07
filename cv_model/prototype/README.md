@@ -5,10 +5,12 @@ This is the Day 1 hackathon scaffold for CV signals using pre-trained MediaPipe 
 ## What it does
 
 - Estimates chest center from pose landmarks.
+- Estimates a CPR-specific chest compression target (lower-half sternum heuristic).
 - Estimates rescuer hand center from hand landmarks.
 - Classifies hand placement: `correct`, `too_high`, `too_low`, `too_left`, `too_right`, `unknown`.
 - Estimates compression BPM and rhythm quality from wrist motion.
 - Applies partial-visibility fallback for short torso occlusions.
+- Renders a hand-shaped target overlay (instead of a dot) to indicate where to perform CPR.
 
 ## Setup
 
@@ -36,6 +38,12 @@ Optional flags:
 - `--max-fallback-frames 12`
 
 Press `q` to quit.
+
+## Quick tests
+
+```bash
+python -m unittest test_cv_signals.py
+```
 
 ## Notes
 

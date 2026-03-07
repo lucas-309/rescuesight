@@ -2,22 +2,25 @@ from __future__ import annotations
 
 import argparse
 import json
+from math import cos, radians, sin
 from pathlib import Path
 from typing import Optional
 import urllib.request
 
 import cv2
 import mediapipe as mp
+import numpy as np
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 
 from cv_signals import (
     BpmEstimator,
+    CprTarget,
     CVSignal,
     Point2D,
     classify_hand_placement,
     distance,
-    estimate_chest_center,
+    estimate_cpr_target,
     estimate_hand_center,
     infer_visibility,
     now_ms,
@@ -136,6 +139,68 @@ def select_primary_hand(
     return best_center, best_wrist_y, max(0.0, min(1.0, best_score + 1.0))
 
 
+def _rotate_local(offset_x: float, offset_y: float, angle_deg: float) -> tuple[float, float]:
+    theta = radians(angle_deg)
+    c = cos(theta)
+    s = sin(theta)
+    return (offset_x * c - offset_y * s, offset_x * s + offset_y * c)
+
+
+def _to_px(
+    center_px: tuple[int, int],
+    scale_px: float,
+    angle_deg: float,
+    local_x: float,
+    local_y: float,
+) -> tuple[int, int]:
+    rx, ry = _rotate_local(local_x * scale_px, local_y * scale_px, angle_deg)
+    return int(center_px[0] + rx), int(center_px[1] + ry)
+
+
+def draw_cpr_hand_target(
+    frame: np.ndarray,
+    target: CprTarget,
+    using_fallback: bool,
+) -> None:
+    frame_h, frame_w = frame.shape[:2]
+    min_dim = min(frame_w, frame_h)
+    center_px = (int(target.center.x * frame_w), int(target.center.y * frame_h))
+    scale_px = max(18, int(target.palmScale * min_dim))
+
+    fill_color = (0, 205, 105) if not using_fallback else (0, 170, 235)
+    edge_color = (255, 255, 255)
+
+    overlay = frame.copy()
+
+    palm_axes = (int(scale_px * 0.48), int(scale_px * 0.64))
+    cv2.ellipse(overlay, center_px, palm_axes, target.angleDeg, 0, 360, fill_color, -1)
+    cv2.ellipse(overlay, center_px, palm_axes, target.angleDeg, 0, 360, edge_color, 2)
+
+    finger_offsets = [(-0.34, -0.95), (-0.12, -1.03), (0.12, -1.03), (0.34, -0.95)]
+    finger_radius = max(4, int(scale_px * 0.18))
+    for fx, fy in finger_offsets:
+        finger_px = _to_px(center_px, scale_px, target.angleDeg, fx, fy)
+        cv2.circle(overlay, finger_px, finger_radius, fill_color, -1)
+        cv2.circle(overlay, finger_px, finger_radius, edge_color, 1)
+
+    thumb_px = _to_px(center_px, scale_px, target.angleDeg, -0.68, -0.10)
+    cv2.circle(overlay, thumb_px, max(4, int(scale_px * 0.20)), fill_color, -1)
+    cv2.circle(overlay, thumb_px, max(4, int(scale_px * 0.20)), edge_color, 1)
+
+    cv2.addWeighted(overlay, 0.52, frame, 0.48, 0.0, frame)
+    label = "CPR target" if not using_fallback else "CPR target (fallback)"
+    cv2.putText(
+        frame,
+        label,
+        (center_px[0] + 12, center_px[1] - 12),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+
 def main() -> int:
     args = parse_args()
 
@@ -145,7 +210,7 @@ def main() -> int:
         return 1
 
     bpm_estimator = BpmEstimator()
-    last_chest_center: Optional[Point2D] = None
+    last_target: Optional[CprTarget] = None
     fallback_frames = 0
     last_json_print_ms = 0
 
@@ -167,32 +232,38 @@ def main() -> int:
             pose_result = pose_landmarker.detect_for_video(mp_image, timestamp_ms)
             hands_result = hand_landmarker.detect_for_video(mp_image, timestamp_ms)
 
-            live_chest_center, chest_conf = estimate_chest_center(
+            live_target, chest_conf = estimate_cpr_target(
                 pose_result.pose_landmarks[0] if pose_result.pose_landmarks else None
             )
 
             using_chest_fallback = False
-            chest_center = live_chest_center
-            if live_chest_center is not None:
-                last_chest_center = live_chest_center
+            chest_target = live_target
+            if live_target is not None:
+                last_target = live_target
                 fallback_frames = 0
-            elif last_chest_center is not None and fallback_frames < args.max_fallback_frames:
-                chest_center = last_chest_center
+            elif last_target is not None and fallback_frames < args.max_fallback_frames:
+                chest_target = last_target
                 chest_conf = max(chest_conf, 0.45)
                 using_chest_fallback = True
                 fallback_frames += 1
             else:
-                chest_center = None
+                chest_target = None
                 chest_conf = 0.0
                 fallback_frames += 1
 
+            chest_center = chest_target.center if chest_target is not None else None
             hand_center, wrist_y, hand_conf = select_primary_hand(hands_result, chest_center)
             placement_conf = min(chest_conf, hand_conf)
-            placement_status = classify_hand_placement(hand_center, chest_center, placement_conf)
+            placement_status = classify_hand_placement(
+                hand_center,
+                chest_center,
+                placement_conf,
+                target_scale=chest_target.palmScale if chest_target else None,
+            )
 
             bpm, rhythm_quality = bpm_estimator.update(wrist_y, now_ms(), hand_conf)
             visibility = infer_visibility(
-                has_live_chest_center=live_chest_center is not None,
+                has_live_chest_center=live_target is not None,
                 has_hand=hand_center is not None,
                 using_chest_fallback=using_chest_fallback,
             )
@@ -207,19 +278,8 @@ def main() -> int:
             )
 
             frame_h, frame_w = frame.shape[:2]
-            if chest_center is not None:
-                chest_px = (int(chest_center.x * frame_w), int(chest_center.y * frame_h))
-                cv2.circle(frame, chest_px, 8, (0, 255, 0), -1)
-                cv2.putText(
-                    frame,
-                    "chest",
-                    (chest_px[0] + 10, chest_px[1]),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 255, 0),
-                    1,
-                    cv2.LINE_AA,
-                )
+            if chest_target is not None:
+                draw_cpr_hand_target(frame, chest_target, using_chest_fallback)
 
             if hand_center is not None:
                 hand_px = (int(hand_center.x * frame_w), int(hand_center.y * frame_h))
