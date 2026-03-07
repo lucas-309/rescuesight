@@ -106,8 +106,10 @@ class TestCvHooks(unittest.TestCase):
                         bodyPosture="upright",
                         postureConfidence=0.9,
                         eyesClosedConfidence=0.08,
-                        compressionRateBpm=112,
-                        compressionRhythmQuality="good",
+                        handPlacementStatus="unknown",
+                        placementConfidence=0.2,
+                        compressionRateBpm=0,
+                        compressionRhythmQuality="unknown",
                     )
                 }
             )
