@@ -516,3 +516,23 @@ or more demo-ready.
 Short Summary for Agents
 
 RescueSight is an XR-based bystander emergency guidance system for public settings. It is meant to help users respond to suspected cardiac arrest, stroke, and related emergencies through guided checklists and CPR assistance. It should be built and described as an assistive response tool, not a diagnostic medical device.
+
+Current Execution Plan Update (2026-03-07)
+
+Primary near-term product flow:
+
+1. CV classifies whether a person is possibly down (lying/collapsed context).
+2. Frontend consumes a live CV summary stream from camera signals (or live feed when feasible) instead of manual CV metric entry.
+3. If confidence is high enough, require a short human-in-the-loop questionnaire (pulse, breathing, responsiveness, major bleeding/trauma, notes).
+4. Do not place real 911 calls from software.
+5. Instead, send a backend escalation request to RescueSight dispatch APIs.
+6. Show requests in a pseudo-hospital dashboard where a dispatcher can assign EMT units and update request status.
+7. Include location context in escalation payloads (label + coordinates + optional indoor descriptor).
+
+Implementation constraints for this flow:
+
+- CV classification remains assistive; user confirmation is required before critical transitions.
+- Language must remain non-diagnostic ("possible person-down", "suspected emergency").
+- The backend dispatch workflow is a simulation and demo environment, not production emergency dispatch integration.
+- Questionnaire UX should be explicitly separated from passive telemetry so users can clearly see when answer input is expected.
+- Webcam/XR operator view should show explicit confirmation when dispatch request handoff to dashboard succeeds or fails.

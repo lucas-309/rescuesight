@@ -10,6 +10,7 @@
     "dev:web": "npm --workspace @rescuesight/web run dev",
     "dev:api": "npm --workspace @rescuesight/api run dev",
     "build": "npm run build --workspaces",
-    "typecheck": "npm run typecheck --workspaces"
+    "typecheck": "npm run typecheck --workspaces",
+    "test:api": "npm --workspace @rescuesight/api run test"
   }
 }

@@ -1,8 +1,43 @@
-node_modules
-dist
-.vite
-.DS_Store
+# Node / web
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
 .env
 .env.*
-coverage
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.python-version
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# CV artifacts and model downloads
+cv_model/prototype/models/
+
+# General temp/cache
+.cache/
+tmp/
 *.log
