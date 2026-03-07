@@ -8,7 +8,6 @@ import type {
   DispatchRequestStatus,
   PersonDownSignal,
   PersistIncidentRequest,
-  TriageAnswers,
   TriageEvaluationResponse,
   UpdateDispatchRequest,
   UpdateIncidentRequest,
@@ -106,100 +105,12 @@ const buildLiveSummaryText = (
     `Visibility: ${signal.visibility}`,
   ].join(" | ");
 
-const inferPersonDownSignalFromTriageAnswers = (answers: TriageAnswers): PersonDownSignal => {
-  const personDownLikely = !answers.responsive && !answers.breathingNormal;
-  return {
-    status: personDownLikely ? "person_down" : "uncertain",
-    confidence: personDownLikely ? 0.82 : 0.55,
-    source: "manual",
-    observedAtIso: new Date().toISOString(),
-  };
-};
-
-const toDispatchQuestionnaireFromTriageAnswers = (
-  answers: TriageAnswers,
-  incidentId: string,
-): CreateDispatchRequest["questionnaire"] => {
-  const strokeSignsPresent =
-    answers.strokeSigns.faceDrooping ||
-    answers.strokeSigns.armWeakness ||
-    answers.strokeSigns.speechDifficulty;
-  const heartSignsPresent =
-    answers.heartRelatedSigns.chestDiscomfort ||
-    answers.heartRelatedSigns.shortnessOfBreath ||
-    answers.heartRelatedSigns.coldSweat ||
-    answers.heartRelatedSigns.nauseaOrUpperBodyDiscomfort;
-
-  const noteParts = [`XR incident ${incidentId}`];
-  if (strokeSignsPresent) {
-    noteParts.push("FAST signs reported");
-  }
-  if (heartSignsPresent) {
-    noteParts.push("heart-related warning signs reported");
-  }
-  const notes = noteParts.join(" | ");
-
-  return {
-    responsiveness: answers.responsive ? "responsive" : "unresponsive",
-    breathing: answers.breathingNormal ? "normal" : "abnormal_or_absent",
-    pulse: "unknown",
-    severeBleeding: false,
-    majorTrauma: false,
-    ...(notes ? { notes } : {}),
-  };
-};
-
-const resolveDispatchLocationForXr = (
-  latestSummary: CvLiveSummary | null,
-  payload: XrTriageHookRequest,
-): CreateDispatchRequest["location"] => {
-  if (latestSummary?.location) {
-    return { ...latestSummary.location };
-  }
-
-  const deviceLabel = payload.deviceContext?.deviceModel ?? "xr_session";
-  return {
-    label: `${deviceLabel} (location unavailable)`,
-    latitude: 0,
-    longitude: 0,
-    indoorDescriptor: "Location unavailable: stream /api/cv/live-signal for real coordinates.",
-  };
-};
-
-const buildXrDispatchContextNote = (
-  incidentId: string,
-  payload: XrTriageHookRequest,
-  triagePathway: string,
-  transitionGate: XrTransitionGate,
-  cvAssist?: XrCvAssist,
-): string => {
-  const parts = [
-    `XR HITL submission`,
-    `incident=${incidentId}`,
-    `pathway=${triagePathway}`,
-    `urgency_gate=${transitionGate.blocked ? "blocked" : "clear"}`,
-  ];
-
-  if (payload.deviceContext?.deviceModel) {
-    parts.push(`device=${payload.deviceContext.deviceModel}`);
-  }
-  if (payload.deviceContext?.interactionMode) {
-    parts.push(`mode=${payload.deviceContext.interactionMode}`);
-  }
-  if (cvAssist?.personDownHint.status) {
-    parts.push(`person_down_hint=${cvAssist.personDownHint.status}`);
-  }
-
-  return parts.join(" | ").slice(0, 4000);
-};
-
 export const buildApp = (options: BuildAppOptions = {}) => {
   const app = express();
   const incidentStore = options.incidentStore ?? new InMemoryIncidentStore();
   const dispatchStore = options.dispatchStore ?? new InMemoryDispatchStore();
   const cvEvaluator = options.cvEvaluator ?? createCvEvaluatorFromEnv();
   const cvAssistByIncident = new Map<string, XrCvAssist>();
-  const dispatchRequestIdByIncident = new Map<string, string>();
   const blockedCheckpointIdsByIncident = new Map<string, string[]>();
   let latestCvLiveSummary: CvLiveSummary | null = null;
   const dispatchStatuses: DispatchRequestStatus[] = [

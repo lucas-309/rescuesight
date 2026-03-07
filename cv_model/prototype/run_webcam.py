@@ -15,7 +15,7 @@ from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 
 from cv_hooks import CvHookRequest, evaluate_cv_hook
-from hitl_flow import HitlQuestionnaireSession, build_xr_triage_payload
+from hitl_flow import HitlQuestionnaireSession, build_dispatch_request_payload
 from cv_signals import (
     BpmEstimator,
     CprTargetStabilizer,
@@ -64,7 +64,7 @@ def parse_args() -> argparse.Namespace:
         "--api-base-url",
         type=str,
         default="",
-        help="Backend base URL for XR triage submissions (example: http://127.0.0.1:8080)",
+        help="Backend base URL for dispatch submissions (example: http://127.0.0.1:8080)",
     )
     parser.add_argument(
         "--disable-hitl",
@@ -361,7 +361,7 @@ def post_json(
                 parsed_body: Optional[dict[str, object]] = body
             else:
                 parsed_body = None
-            return True, f"Submitted XR triage ({response.status}).", parsed_body
+            return True, f"Submitted dispatch request ({response.status}).", parsed_body
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8")
         detail = ""
@@ -375,10 +375,10 @@ def post_json(
             except json.JSONDecodeError:
                 detail = raw
         if detail:
-            return False, f"XR triage failed ({exc.code}): {detail}", None
-        return False, f"XR triage failed ({exc.code}).", None
+            return False, f"Dispatch request failed ({exc.code}): {detail}", None
+        return False, f"Dispatch request failed ({exc.code}).", None
     except urllib.error.URLError as exc:
-        return False, f"XR triage failed: {exc.reason}", None
+        return False, f"Dispatch request failed: {exc.reason}", None
 
 
 def build_live_signal_payload(args: argparse.Namespace, signal: CVSignal) -> dict[str, object]:
@@ -408,6 +408,40 @@ def build_live_signal_payload(args: argparse.Namespace, signal: CVSignal) -> dic
     return payload
 
 
+def build_dispatch_location_payload(args: argparse.Namespace) -> dict[str, object]:
+    label = args.location_label.strip()
+    if args.location_lat is not None and args.location_lon is not None:
+        location_payload: dict[str, object] = {
+            "label": label or "CV webcam location",
+            "latitude": float(args.location_lat),
+            "longitude": float(args.location_lon),
+        }
+        if args.location_accuracy is not None:
+            location_payload["accuracyMeters"] = float(args.location_accuracy)
+        if args.location_indoor.strip():
+            location_payload["indoorDescriptor"] = args.location_indoor.strip()
+        return location_payload
+
+    return {
+        "label": "CV webcam (location unavailable)",
+        "latitude": 0.0,
+        "longitude": 0.0,
+        "indoorDescriptor": (
+            "Set --location-label/--location-lat/--location-lon for real location in dashboard."
+        ),
+    }
+
+
+def build_person_down_signal_payload(cv_status: str, cv_confidence: float, timestamp_ms: int) -> dict[str, object]:
+    mapped_status = "person_down" if cv_status == "possible" else "uncertain"
+    return {
+        "status": mapped_status,
+        "confidence": round(max(0.0, min(1.0, float(cv_confidence))), 3),
+        "source": "cv",
+        "frameTimestampMs": int(timestamp_ms),
+    }
+
+
 def post_live_signal(url: str, payload: dict[str, object]) -> tuple[bool, str]:
     request_data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -430,7 +464,7 @@ def post_live_signal(url: str, payload: dict[str, object]) -> tuple[bool, str]:
 def main() -> int:
     args = parse_args()
     api_base_url = args.api_base_url.strip().rstrip("/")
-    xr_triage_url = f"{api_base_url}/api/xr/triage" if api_base_url else ""
+    dispatch_request_url = f"{api_base_url}/api/dispatch/requests" if api_base_url else ""
     live_signal_url = args.post_url.strip()
     hitl_enabled = not args.disable_hitl
     questionnaire = HitlQuestionnaireSession(
@@ -518,23 +552,22 @@ def main() -> int:
                     print(questionnaire.last_status)
 
             if hitl_enabled and questionnaire.completed_answers is not None:
-                if xr_triage_url:
-                    xr_payload = build_xr_triage_payload(
-                        answers=questionnaire.completed_answers,
-                        signal=signal,
-                        acknowledged_checkpoints=questionnaire.acknowledged_checkpoints(),
-                        incident_id=questionnaire.incident_id,
+                if dispatch_request_url:
+                    dispatch_payload = build_dispatch_request_payload(
+                        questionnaire=questionnaire.completed_answers,
+                        location=build_dispatch_location_payload(args),
+                        person_down_signal=build_person_down_signal_payload(
+                            cv_assist.personDownHint.status,
+                            cv_assist.personDownHint.confidence,
+                            signal.frameTimestampMs,
+                        ),
                     )
-                    submitted, submit_status, response = post_json(xr_triage_url, xr_payload)
-                    incident_id: Optional[str] = None
-                    if submitted and response is not None:
-                        maybe_incident_id = response.get("incidentId")
-                        if isinstance(maybe_incident_id, str):
-                            incident_id = maybe_incident_id
+                    _submitted, submit_status, _response = post_json(
+                        dispatch_request_url, dispatch_payload
+                    )
                     questionnaire.mark_submitted(
                         status=submit_status,
                         timestamp_ms=signal.frameTimestampMs,
-                        incident_id=incident_id,
                     )
                 else:
                     questionnaire.mark_submitted(
@@ -578,7 +611,9 @@ def main() -> int:
                 f"api_stream: {live_post_status}",
             ]
             if hitl_enabled:
-                status_lines.extend(questionnaire.overlay_lines(api_enabled=bool(xr_triage_url)))
+                status_lines.extend(
+                    questionnaire.overlay_lines(api_enabled=bool(dispatch_request_url))
+                )
                 status_lines.append("Controls: q=quit y/n=answer h=start x=reset")
             else:
                 status_lines.append("HITL questionnaire disabled (--disable-hitl).")
