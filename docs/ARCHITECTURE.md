@@ -13,8 +13,11 @@
 Responsibilities:
 - Render bystander-facing triage checklist
 - Collect structured answers
+- Support demo scenario preset loading
+- Capture incident timeline details for handoff
 - Display routed emergency pathway and action steps
 - Provide CPR metronome helper for possible cardiac arrest cases
+- Generate responder handoff summary text for export
 
 Current integration:
 - `POST /api/triage/evaluate`
@@ -40,10 +43,11 @@ Responsibilities:
 ## Data Flow
 
 1. User completes triage questions in web UI.
-2. Web app sends typed `TriageAnswers` payload to API.
-3. API validates payload and runs decision rules.
-4. API returns `TriageEvaluationResponse` with pathway + action steps.
-5. Web app renders result and optional CPR metronome helper.
+2. User optionally records timeline fields (first observed time, AED status, actions taken, notes).
+3. Web app sends typed `TriageAnswers` payload to API.
+4. API validates payload and runs decision rules.
+5. API returns `TriageEvaluationResponse` with pathway + action steps.
+6. Web app renders result, optional CPR metronome helper, and responder handoff summary.
 
 ## Triage Rules (Current)
 

@@ -9,6 +9,29 @@ import { CprMetronome } from "./CprMetronome";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
+interface ScenarioPreset {
+  id: string;
+  title: string;
+  description: string;
+  answers: TriageAnswers;
+}
+
+type IncidentActionKey =
+  | "emsCalled"
+  | "cprStarted"
+  | "aedRequested"
+  | "aedArrived"
+  | "strokeOnsetRecorded";
+
+type AedStatus = "unknown" | "not_available" | "retrieval_in_progress" | "on_scene";
+
+interface IncidentTimeline {
+  firstObservedAtLocal: string;
+  responderNotes: string;
+  aedStatus: AedStatus;
+  actionsTaken: Record<IncidentActionKey, boolean>;
+}
+
 const defaultStrokeSigns: StrokeSigns = {
   faceDrooping: false,
   armWeakness: false,
@@ -29,11 +52,151 @@ const defaultAnswers: TriageAnswers = {
   heartRelatedSigns: defaultHeartSigns,
 };
 
+const actionLabelMap: Record<IncidentActionKey, string> = {
+  emsCalled: "Emergency services called",
+  cprStarted: "CPR started",
+  aedRequested: "AED retrieval requested",
+  aedArrived: "AED arrived on scene",
+  strokeOnsetRecorded: "Stroke symptom onset time recorded",
+};
+
+const actionKeys = Object.keys(actionLabelMap) as IncidentActionKey[];
+
+const aedStatusLabelMap: Record<AedStatus, string> = {
+  unknown: "Unknown",
+  not_available: "Not available nearby",
+  retrieval_in_progress: "Retrieval in progress",
+  on_scene: "AED on scene",
+};
+
+const defaultTimeline: IncidentTimeline = {
+  firstObservedAtLocal: "",
+  responderNotes: "",
+  aedStatus: "unknown",
+  actionsTaken: {
+    emsCalled: false,
+    cprStarted: false,
+    aedRequested: false,
+    aedArrived: false,
+    strokeOnsetRecorded: false,
+  },
+};
+
+const cloneAnswers = (answers: TriageAnswers): TriageAnswers => ({
+  responsive: answers.responsive,
+  breathingNormal: answers.breathingNormal,
+  strokeSigns: { ...answers.strokeSigns },
+  heartRelatedSigns: { ...answers.heartRelatedSigns },
+});
+
+const toLocalDateTimeInput = (date: Date): string => {
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
+};
+
+const formatDateTime = (value: string): string => {
+  if (!value) {
+    return "Not recorded";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "Not recorded";
+  }
+  return parsed.toLocaleString();
+};
+
+const scenarioPresets: ScenarioPreset[] = [
+  {
+    id: "collapse",
+    title: "Collapse / Unresponsive",
+    description: "Simulates a possible cardiac arrest pathway.",
+    answers: {
+      responsive: false,
+      breathingNormal: false,
+      strokeSigns: {
+        faceDrooping: false,
+        armWeakness: false,
+        speechDifficulty: false,
+      },
+      heartRelatedSigns: {
+        chestDiscomfort: false,
+        shortnessOfBreath: false,
+        coldSweat: false,
+        nauseaOrUpperBodyDiscomfort: false,
+      },
+    },
+  },
+  {
+    id: "stroke",
+    title: "Suspected Stroke",
+    description: "Simulates FAST-positive signs with normal breathing.",
+    answers: {
+      responsive: true,
+      breathingNormal: true,
+      strokeSigns: {
+        faceDrooping: true,
+        armWeakness: true,
+        speechDifficulty: true,
+      },
+      heartRelatedSigns: {
+        chestDiscomfort: false,
+        shortnessOfBreath: false,
+        coldSweat: false,
+        nauseaOrUpperBodyDiscomfort: false,
+      },
+    },
+  },
+  {
+    id: "heart",
+    title: "Heart-Related Signs",
+    description: "Simulates a possible heart-related emergency branch.",
+    answers: {
+      responsive: true,
+      breathingNormal: true,
+      strokeSigns: {
+        faceDrooping: false,
+        armWeakness: false,
+        speechDifficulty: false,
+      },
+      heartRelatedSigns: {
+        chestDiscomfort: true,
+        shortnessOfBreath: true,
+        coldSweat: true,
+        nauseaOrUpperBodyDiscomfort: false,
+      },
+    },
+  },
+  {
+    id: "unclear",
+    title: "Unclear Emergency",
+    description: "Simulates inconclusive signs requiring escalation.",
+    answers: {
+      responsive: true,
+      breathingNormal: true,
+      strokeSigns: {
+        faceDrooping: false,
+        armWeakness: false,
+        speechDifficulty: false,
+      },
+      heartRelatedSigns: {
+        chestDiscomfort: false,
+        shortnessOfBreath: false,
+        coldSweat: false,
+        nauseaOrUpperBodyDiscomfort: false,
+      },
+    },
+  },
+];
+
 export const App = () => {
   const [answers, setAnswers] = useState<TriageAnswers>(defaultAnswers);
+  const [timeline, setTimeline] = useState<IncidentTimeline>(defaultTimeline);
   const [result, setResult] = useState<TriageEvaluationResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
   const endpoint = useMemo(
     () => `${API_BASE_URL}/api/triage/evaluate`.replace(/\/\//g, "/").replace("http:/", "http://").replace("https:/", "https://"),
@@ -60,9 +223,31 @@ export const App = () => {
     }));
   };
 
+  const setTimelineAction = (key: IncidentActionKey, value: boolean) => {
+    setTimeline((current) => ({
+      ...current,
+      actionsTaken: {
+        ...current.actionsTaken,
+        [key]: value,
+      },
+    }));
+  };
+
+  const loadPreset = (preset: ScenarioPreset) => {
+    setAnswers(cloneAnswers(preset.answers));
+    setResult(null);
+    setError(null);
+    setCopyStatus(null);
+    setTimeline((current) => ({
+      ...current,
+      firstObservedAtLocal: current.firstObservedAtLocal || toLocalDateTimeInput(new Date()),
+    }));
+  };
+
   const evaluate = async () => {
     setLoading(true);
     setError(null);
+    setCopyStatus(null);
 
     try {
       const response = await fetch(endpoint, {
@@ -87,11 +272,99 @@ export const App = () => {
 
   const reset = () => {
     setAnswers(defaultAnswers);
+    setTimeline(defaultTimeline);
     setResult(null);
     setError(null);
+    setCopyStatus(null);
   };
 
   const currentResult = result?.result;
+
+  const selectedStrokeSigns = useMemo(() => {
+    const labels: string[] = [];
+    if (answers.strokeSigns.faceDrooping) {
+      labels.push("Face drooping");
+    }
+    if (answers.strokeSigns.armWeakness) {
+      labels.push("Arm weakness");
+    }
+    if (answers.strokeSigns.speechDifficulty) {
+      labels.push("Speech difficulty");
+    }
+    return labels;
+  }, [answers.strokeSigns]);
+
+  const selectedHeartSigns = useMemo(() => {
+    const labels: string[] = [];
+    if (answers.heartRelatedSigns.chestDiscomfort) {
+      labels.push("Chest discomfort or pressure");
+    }
+    if (answers.heartRelatedSigns.shortnessOfBreath) {
+      labels.push("Shortness of breath");
+    }
+    if (answers.heartRelatedSigns.coldSweat) {
+      labels.push("Cold sweat");
+    }
+    if (answers.heartRelatedSigns.nauseaOrUpperBodyDiscomfort) {
+      labels.push("Nausea or upper-body discomfort");
+    }
+    return labels;
+  }, [answers.heartRelatedSigns]);
+
+  const completedActions = useMemo(
+    () =>
+      actionKeys
+        .filter((key) => timeline.actionsTaken[key])
+        .map((key) => actionLabelMap[key]),
+    [timeline.actionsTaken],
+  );
+
+  const handoffSummary = useMemo(() => {
+    if (!currentResult || !result) {
+      return null;
+    }
+
+    const lines = [
+      "RescueSight Emergency Handoff Summary",
+      `Generated: ${new Date(result.evaluatedAtIso).toLocaleString()}`,
+      `Pathway: ${currentResult.label}`,
+      `Urgency: ${currentResult.urgency.toUpperCase()}`,
+      `First observed time: ${formatDateTime(timeline.firstObservedAtLocal)}`,
+      `Responsiveness: ${answers.responsive ? "Responsive" : "Not responsive"}`,
+      `Breathing: ${answers.breathingNormal ? "Appears normal" : "Abnormal or absent"}`,
+      `FAST signs: ${selectedStrokeSigns.length > 0 ? selectedStrokeSigns.join(", ") : "None reported"}`,
+      `Heart-related signs: ${selectedHeartSigns.length > 0 ? selectedHeartSigns.join(", ") : "None reported"}`,
+      `AED status: ${aedStatusLabelMap[timeline.aedStatus]}`,
+      `Actions already taken: ${completedActions.length > 0 ? completedActions.join("; ") : "None recorded"}`,
+      `Responder notes: ${timeline.responderNotes.trim() || "None"}`,
+      "Safety note: Assistive bystander guidance only. This is not a medical diagnosis.",
+    ];
+
+    return lines.join("\n");
+  }, [
+    answers.breathingNormal,
+    answers.responsive,
+    completedActions,
+    currentResult,
+    result,
+    selectedHeartSigns,
+    selectedStrokeSigns,
+    timeline.aedStatus,
+    timeline.firstObservedAtLocal,
+    timeline.responderNotes,
+  ]);
+
+  const copySummary = async () => {
+    if (!handoffSummary) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(handoffSummary);
+      setCopyStatus("Responder summary copied.");
+    } catch {
+      setCopyStatus("Clipboard was unavailable. Copy summary manually.");
+    }
+  };
 
   return (
     <main className="app-shell">
@@ -104,6 +377,19 @@ export const App = () => {
 
       <section className="panel">
         <h2>Triage Checklist</h2>
+
+        <div className="question-block">
+          <h3>Demo Scenario Presets</h3>
+          <p className="helper-text">Load a preset to quickly simulate common emergency pathways.</p>
+          <div className="scenario-grid">
+            {scenarioPresets.map((preset) => (
+              <button type="button" key={preset.id} className="preset-button" onClick={() => loadPreset(preset)}>
+                <strong>{preset.title}</strong>
+                <span>{preset.description}</span>
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div className="question-block">
           <h3>1. Responsiveness</h3>
@@ -213,6 +499,68 @@ export const App = () => {
           </label>
         </div>
 
+        <div className="question-block">
+          <h3>Incident Timeline</h3>
+          <label>
+            First observed time
+            <input
+              type="datetime-local"
+              value={timeline.firstObservedAtLocal}
+              onChange={(event) =>
+                setTimeline((current) => ({
+                  ...current,
+                  firstObservedAtLocal: event.target.value,
+                }))
+              }
+            />
+          </label>
+
+          <label>
+            AED status
+            <select
+              value={timeline.aedStatus}
+              onChange={(event) =>
+                setTimeline((current) => ({
+                  ...current,
+                  aedStatus: event.target.value as AedStatus,
+                }))
+              }
+            >
+              <option value="unknown">Unknown</option>
+              <option value="not_available">Not available nearby</option>
+              <option value="retrieval_in_progress">Retrieval in progress</option>
+              <option value="on_scene">AED on scene</option>
+            </select>
+          </label>
+
+          <div className="timeline-actions">
+            {actionKeys.map((key) => (
+              <label key={key}>
+                <input
+                  type="checkbox"
+                  checked={timeline.actionsTaken[key]}
+                  onChange={(event) => setTimelineAction(key, event.target.checked)}
+                />
+                {actionLabelMap[key]}
+              </label>
+            ))}
+          </div>
+
+          <label>
+            Notes for responders
+            <textarea
+              value={timeline.responderNotes}
+              placeholder="Add context responders should know."
+              onChange={(event) =>
+                setTimeline((current) => ({
+                  ...current,
+                  responderNotes: event.target.value,
+                }))
+              }
+            />
+          </label>
+        </div>
+
         <div className="actions-row">
           <button type="button" className="action-button" disabled={loading} onClick={evaluate}>
             {loading ? "Evaluating..." : "Evaluate Emergency Pathway"}
@@ -260,6 +608,20 @@ export const App = () => {
                 maxBpm={currentResult.cprGuidance.targetBpmRange[1]}
               />
             </>
+          ) : null}
+
+          {handoffSummary ? (
+            <section className="handoff-summary">
+              <h3>Responder Handoff Summary</h3>
+              <p className="helper-text">
+                Share this with arriving responders to preserve timeline and observed context.
+              </p>
+              <textarea readOnly value={handoffSummary} />
+              <button type="button" className="action-button" onClick={copySummary}>
+                Copy Summary
+              </button>
+              {copyStatus ? <p className="status-message">{copyStatus}</p> : null}
+            </section>
           ) : null}
         </section>
       ) : null}

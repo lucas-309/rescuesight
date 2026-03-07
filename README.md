@@ -48,6 +48,11 @@ npm run dev:web
   - breathing
   - FAST stroke signs
   - heart-related warning signs
+- Demo scenario presets:
+  - collapse / unresponsive
+  - suspected stroke
+  - heart-related signs
+  - unclear emergency
 - Deterministic pathway output:
   - possible cardiac arrest
   - suspected stroke
@@ -55,6 +60,12 @@ npm run dev:web
   - unclear emergency
 - Immediate and follow-up actions with safety language
 - CPR rhythm helper (100-120 BPM) for possible cardiac arrest pathway
+- Incident timeline capture:
+  - first observed time
+  - AED status/retrieval state
+  - actions already taken
+  - responder notes
+- Responder handoff summary card with copy-to-clipboard export
 
 ## Safety Positioning
 

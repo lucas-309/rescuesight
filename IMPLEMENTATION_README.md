@@ -56,10 +56,10 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
 - [x] Add CPR rhythm helper (100-120 BPM metronome cues in UI)
 
 ### Phase 2: Demo depth
-- [ ] Add scenario simulator mode for demos
-- [ ] Add event timeline capture (onset time, actions taken)
-- [ ] Add AED retrieval prompt flow
-- [ ] Add emergency handoff summary card for responders
+- [x] Add scenario simulator mode for demos
+- [x] Add event timeline capture (onset time, actions taken)
+- [x] Add AED retrieval prompt flow
+- [x] Add emergency handoff summary card for responders
 
 ### Phase 3: AI/RAG + Tooling
 - [ ] Add constrained emergency knowledge base retrieval
@@ -106,11 +106,17 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
   - `docs/ARCHITECTURE.md`
 - Completed Phase 0 and initial Phase 1 vertical slice.
 - Attempted dependency installation (`npm install`) for validation, but command hung in current restricted environment; runtime verification remains pending after install succeeds.
+- Implemented Phase 2 demo-depth features in web UI:
+  - scenario presets for rapid pathway simulation
+  - incident timeline capture (first observed time, actions taken, notes)
+  - AED status/retrieval prompt state in timeline section
+  - responder handoff summary card with copy-to-clipboard export
+- Updated docs (`README.md`, `docs/ARCHITECTURE.md`) to include the new workflow capabilities.
 
 ## Next Planned Steps (Immediate)
 
 1. Add unit tests for triage routing logic in `apps/api`.
-2. Add frontend scenario presets for demo speed (collapse, suspected stroke, unclear).
-3. Add incident timeline capture (symptom onset + actions taken).
-4. Add handoff summary output to share with responders.
-5. Start Phase 3 RAG scaffolding with strict safety filters.
+2. Add API support for optional timeline persistence/handoff payload storage.
+3. Add frontend validation hints for required escalation fields before handoff export.
+4. Start Phase 3 RAG scaffolding with strict safety filters.
+5. Add initial MCP tool orchestration skeleton.
