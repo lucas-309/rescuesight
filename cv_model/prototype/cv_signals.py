@@ -418,6 +418,33 @@ class BpmEstimator:
         return pstdev(intervals) / avg
 
 
+class TemporalConfidenceSmoother:
+    """EMA smoother with asymmetric rise/fall rates for noisy CV confidences."""
+
+    def __init__(
+        self,
+        rise_alpha: float = 0.55,
+        fall_alpha: float = 0.22,
+    ) -> None:
+        self.rise_alpha = _clamp(rise_alpha, 0.01, 1.0)
+        self.fall_alpha = _clamp(fall_alpha, 0.01, 1.0)
+        self._value: Optional[float] = None
+
+    def update(self, raw_value: float) -> float:
+        bounded = _clamp(raw_value, 0.0, 1.0)
+        if self._value is None:
+            self._value = bounded
+            return bounded
+
+        alpha = self.rise_alpha if bounded >= self._value else self.fall_alpha
+        self._value = _clamp(alpha * bounded + (1.0 - alpha) * self._value, 0.0, 1.0)
+        return self._value
+
+    @property
+    def value(self) -> float:
+        return 0.0 if self._value is None else self._value
+
+
 def now_ms() -> int:
     return int(time() * 1000)
 
@@ -583,6 +610,8 @@ def estimate_body_posture(
     torso_incline_deg = abs(degrees(atan2(torso_dy, torso_dx)))
     if torso_incline_deg > 90.0:
         torso_incline_deg = 180.0 - torso_incline_deg
+    horizontal_torso = _clamp((58.0 - torso_incline_deg) / 58.0, 0.0, 1.0)
+    vertical_torso = _clamp((torso_incline_deg - 32.0) / 58.0, 0.0, 1.0)
 
     torso_visibility = (
         float(getattr(left_shoulder, "visibility", 0.0))
@@ -615,23 +644,48 @@ def estimate_body_posture(
             lower_body_verticality = _clamp(abs(ankle_mid.y - hip_mid.y) / lower_vec_norm, 0.0, 1.0)
             has_ankle = True
 
-    lying_score = horizontality * 0.74 + (1.0 - max(0.0, torso_visibility - 0.45)) * 0.06
+    lying_score = horizontal_torso * 0.48 + horizontality * 0.16
     if has_ankle:
-        lying_score += (1.0 - lower_body_verticality) * 0.12
+        lying_score += (1.0 - lower_body_verticality) * 0.16
+    else:
+        lying_score += 0.06
+    if has_knee:
+        lying_score += (1.0 - knee_verticality) * 0.10
+    else:
+        lying_score += 0.04
+    if not shoulder_above_hip:
+        lying_score += 0.08
+    lying_score += (1.0 - max(0.0, torso_visibility - 0.40)) * 0.08
+    if torso_incline_deg <= 26.0:
+        lying_score += 0.16
+    if has_ankle and lower_body_verticality < 0.36:
+        lying_score += 0.08
     lying_score = _clamp(lying_score, 0.0, 1.0)
 
-    upright_score = verticality * (0.68 if shoulder_above_hip else 0.45)
+    upright_score = vertical_torso * 0.44 + verticality * 0.14
+    if shoulder_above_hip:
+        upright_score += 0.18
+    else:
+        upright_score += 0.04
     if has_ankle:
         upright_score += lower_body_verticality * 0.20
+    if has_knee:
+        upright_score += knee_verticality * 0.06
+    if torso_incline_deg >= 68.0 and shoulder_above_hip:
+        upright_score += 0.10
+    if torso_incline_deg < 46.0:
+        upright_score *= 0.72
     upright_score = _clamp(upright_score, 0.0, 1.0)
 
-    sitting_score = verticality * 0.34
+    sitting_score = vertical_torso * 0.36 + verticality * 0.12
     if has_knee:
-        sitting_score += (1.0 - knee_verticality) * 0.45
+        sitting_score += (1.0 - knee_verticality) * 0.36
         if knee_mid is not None and knee_mid.y <= hip_mid.y + 0.07:
             sitting_score += 0.16
     if has_ankle and not has_knee:
         sitting_score += (1.0 - lower_body_verticality) * 0.18
+    if not has_knee and has_ankle:
+        sitting_score += 0.05
     sitting_score = _clamp(sitting_score, 0.0, 1.0)
 
     posture = "unknown"
@@ -641,10 +695,20 @@ def estimate_body_posture(
         ("sitting", sitting_score),
         ("upright", upright_score),
     ]
-    best_posture, best_score = max(candidates, key=lambda item: item[1])
-    if best_score >= 0.38:
+    ranked = sorted(candidates, key=lambda item: item[1], reverse=True)
+    best_posture, best_score = ranked[0]
+    second_score = ranked[1][1]
+    margin = _clamp(best_score - second_score, 0.0, 1.0)
+
+    if best_score >= 0.34:
         posture = best_posture
-        confidence = best_score * _clamp(torso_visibility + 0.2, 0.2, 1.0)
+        raw_conf = best_score * _clamp(torso_visibility + 0.25, 0.25, 1.0)
+        confidence = raw_conf * _clamp(0.55 + margin * 1.25, 0.30, 1.0)
+
+        # Guardrail: avoid strongly declaring upright when torso inclination does not support it.
+        if posture == "upright" and torso_incline_deg < 50.0 and margin < 0.18:
+            posture = "unknown"
+            confidence *= 0.45
 
     return posture, _clamp(confidence, 0.0, 1.0), torso_incline_deg
 
@@ -666,9 +730,18 @@ def estimate_eyes_closed_confidence(face_result: object) -> float:
         blink_right = by_name.get("eyeBlinkRight", 0.0)
         squint_left = by_name.get("eyeSquintLeft", 0.0)
         squint_right = by_name.get("eyeSquintRight", 0.0)
-        closed_score = 0.65 * ((blink_left + blink_right) / 2.0) + 0.35 * (
-            (squint_left + squint_right) / 2.0
-        )
+        wide_left = by_name.get("eyeWideLeft", 0.0)
+        wide_right = by_name.get("eyeWideRight", 0.0)
+
+        blink_mean = (blink_left + blink_right) / 2.0
+        squint_mean = (squint_left + squint_right) / 2.0
+        not_wide_mean = 1.0 - ((wide_left + wide_right) / 2.0)
+
+        closed_score = 0.56 * blink_mean + 0.28 * squint_mean + 0.16 * not_wide_mean
+        if blink_mean >= 0.72 and squint_mean >= 0.48:
+            closed_score = max(closed_score, 0.72 + 0.28 * (blink_mean - 0.72))
+        if max(wide_left, wide_right) > 0.74 and blink_mean < 0.45:
+            closed_score *= 0.62
         best_score = max(best_score, _clamp(closed_score, 0.0, 1.0))
 
     return _clamp(best_score, 0.0, 1.0)

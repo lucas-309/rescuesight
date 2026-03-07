@@ -87,7 +87,9 @@ class HitlQuestionnaireSession:
             return False
 
         if not trigger_ready:
-            self.auto_prompt_ready = False
+            # Keep a previously armed prompt latched to avoid flicker from noisy frame-to-frame CV.
+            if self.auto_prompt_ready:
+                return False
             self.pending_victim_snapshot = None
             return False
 
@@ -221,7 +223,7 @@ class HitlQuestionnaireSession:
             lines.append("Start questionnaire anyway? Y=yes N=no")
             lines.append("Controls: H=start X=reset")
         elif self.auto_prompt_ready:
-            lines.append("Trigger met: lying>0.60 and eyes-closed>0.80.")
+            lines.append("Trigger met: sustained person-down evidence.")
             lines.append("Press H to start questionnaire now.")
             lines.append("Controls: H=start X=reset")
         elif self.completed_answers is not None:

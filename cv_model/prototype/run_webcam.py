@@ -24,6 +24,7 @@ from cv_signals import (
     CprTarget,
     CVSignal,
     Point2D,
+    TemporalConfidenceSmoother,
     classify_hand_placement,
     distance,
     estimate_cpr_target,
@@ -255,6 +256,32 @@ def _to_px(
     return int(center_px[0] + rx), int(center_px[1] + ry)
 
 
+def _draw_palm_glyph(
+    canvas: np.ndarray,
+    center_px: tuple[int, int],
+    scale_px: float,
+    angle_deg: float,
+    fill_color: tuple[int, int, int],
+    edge_color: tuple[int, int, int],
+    edge_thickness: int = 2,
+) -> None:
+    palm_axes = (int(scale_px * 0.48), int(scale_px * 0.64))
+    cv2.ellipse(canvas, center_px, palm_axes, angle_deg, 0, 360, fill_color, -1)
+    cv2.ellipse(canvas, center_px, palm_axes, angle_deg, 0, 360, edge_color, edge_thickness)
+
+    finger_offsets = [(-0.34, -0.95), (-0.12, -1.03), (0.12, -1.03), (0.34, -0.95)]
+    finger_radius = max(4, int(scale_px * 0.18))
+    for fx, fy in finger_offsets:
+        finger_px = _to_px(center_px, scale_px, angle_deg, fx, fy)
+        cv2.circle(canvas, finger_px, finger_radius, fill_color, -1)
+        cv2.circle(canvas, finger_px, finger_radius, edge_color, max(1, edge_thickness - 1))
+
+    thumb_px = _to_px(center_px, scale_px, angle_deg, -0.68, -0.10)
+    thumb_radius = max(4, int(scale_px * 0.20))
+    cv2.circle(canvas, thumb_px, thumb_radius, fill_color, -1)
+    cv2.circle(canvas, thumb_px, thumb_radius, edge_color, max(1, edge_thickness - 1))
+
+
 def draw_cpr_hand_target(
     frame: np.ndarray,
     target: CprTarget,
@@ -276,20 +303,15 @@ def draw_cpr_hand_target(
 
     overlay = frame.copy()
 
-    palm_axes = (int(scale_px * 0.48), int(scale_px * 0.64))
-    cv2.ellipse(overlay, center_px, palm_axes, target.angleDeg, 0, 360, fill_color, -1)
-    cv2.ellipse(overlay, center_px, palm_axes, target.angleDeg, 0, 360, edge_color, 2)
-
-    finger_offsets = [(-0.34, -0.95), (-0.12, -1.03), (0.12, -1.03), (0.34, -0.95)]
-    finger_radius = max(4, int(scale_px * 0.18))
-    for fx, fy in finger_offsets:
-        finger_px = _to_px(center_px, scale_px, target.angleDeg, fx, fy)
-        cv2.circle(overlay, finger_px, finger_radius, fill_color, -1)
-        cv2.circle(overlay, finger_px, finger_radius, edge_color, 1)
-
-    thumb_px = _to_px(center_px, scale_px, target.angleDeg, -0.68, -0.10)
-    cv2.circle(overlay, thumb_px, max(4, int(scale_px * 0.20)), fill_color, -1)
-    cv2.circle(overlay, thumb_px, max(4, int(scale_px * 0.20)), edge_color, 1)
+    _draw_palm_glyph(
+        overlay,
+        center_px=center_px,
+        scale_px=float(scale_px),
+        angle_deg=float(target.angleDeg),
+        fill_color=fill_color,
+        edge_color=edge_color,
+        edge_thickness=2,
+    )
 
     cv2.addWeighted(overlay, 0.52, frame, 0.48, 0.0, frame)
     if is_locked and using_fallback:
@@ -308,6 +330,162 @@ def draw_cpr_hand_target(
         0.55,
         (255, 255, 255),
         2,
+        cv2.LINE_AA,
+    )
+
+
+def _placement_instruction(placement_status: str) -> str:
+    mapping = {
+        "correct": "Hand placement confirmed.",
+        "too_left": "Move hand slightly right to match target.",
+        "too_right": "Move hand slightly left to match target.",
+        "too_high": "Move hand slightly lower on sternum.",
+        "too_low": "Move hand slightly higher on sternum.",
+        "unknown": "Keep torso and hands fully visible to reacquire.",
+    }
+    return mapping.get(placement_status, "Adjust hand to target.")
+
+
+def draw_detected_hand_locator(
+    frame: np.ndarray,
+    hand_center: Point2D,
+    chest_target: Optional[CprTarget],
+    placement_status: str,
+    placement_confidence: float,
+    ready_for_compressions: bool,
+) -> None:
+    frame_h, frame_w = frame.shape[:2]
+    min_dim = min(frame_w, frame_h)
+    center_px = (int(hand_center.x * frame_w), int(hand_center.y * frame_h))
+
+    if chest_target is not None:
+        angle_deg = chest_target.angleDeg
+        scale_px = max(16, int(chest_target.palmScale * min_dim * 0.92))
+    else:
+        angle_deg = 90.0
+        scale_px = max(16, int(min_dim * 0.045))
+
+    if ready_for_compressions:
+        fill_color = (30, 215, 105)
+        edge_color = (255, 255, 255)
+        ring_color = (75, 245, 170)
+    elif placement_status == "unknown":
+        fill_color = (0, 165, 230)
+        edge_color = (255, 255, 255)
+        ring_color = (75, 225, 255)
+    else:
+        fill_color = (0, 140, 255)
+        edge_color = (255, 255, 255)
+        ring_color = (115, 205, 255)
+
+    overlay = frame.copy()
+    _draw_palm_glyph(
+        overlay,
+        center_px=center_px,
+        scale_px=float(scale_px),
+        angle_deg=float(angle_deg),
+        fill_color=fill_color,
+        edge_color=edge_color,
+        edge_thickness=2,
+    )
+    cv2.circle(
+        overlay,
+        center_px,
+        int(scale_px * 1.35),
+        ring_color,
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.addWeighted(overlay, 0.60, frame, 0.40, 0.0, frame)
+
+    label = (
+        f"hand confirmed ({placement_confidence:.2f})"
+        if ready_for_compressions
+        else f"hand tracked ({placement_confidence:.2f})"
+    )
+    cv2.putText(
+        frame,
+        label,
+        (center_px[0] + 12, center_px[1] + 18),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.52,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+    if chest_target is None:
+        return
+
+    target_px = (int(chest_target.center.x * frame_w), int(chest_target.center.y * frame_h))
+    connector_color = (90, 240, 170) if ready_for_compressions else (80, 210, 255)
+    cv2.line(frame, center_px, target_px, connector_color, 2, cv2.LINE_AA)
+
+
+def draw_compression_readiness_banner(
+    frame: np.ndarray,
+    hand_visible: bool,
+    ready_for_compressions: bool,
+    placement_status: str,
+    placement_confidence: float,
+) -> None:
+    if not hand_visible:
+        text = "No hand detected. Place your hand over the chest target."
+        fill_color = (38, 55, 75)
+        border_color = (120, 195, 255)
+    elif ready_for_compressions:
+        text = "HAND POSITION CONFIRMED. START CHEST COMPRESSIONS NOW."
+        fill_color = (24, 96, 42)
+        border_color = (116, 240, 152)
+    else:
+        text = (
+            f"{_placement_instruction(placement_status)} "
+            f"Confidence: {placement_confidence:.2f}"
+        )
+        fill_color = (58, 68, 26)
+        border_color = (232, 230, 132)
+
+    frame_h, frame_w = frame.shape[:2]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.64
+    thickness = 2
+    pad_x = 14
+    pad_y = 10
+    (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
+    panel_w = min(frame_w - 20, text_w + pad_x * 2)
+    panel_h = text_h + pad_y * 2
+    panel_x = max(10, int((frame_w - panel_w) / 2))
+    panel_y = 12
+
+    overlay = frame.copy()
+    cv2.rectangle(
+        overlay,
+        (panel_x, panel_y),
+        (panel_x + panel_w, panel_y + panel_h),
+        fill_color,
+        -1,
+    )
+    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0.0, frame)
+    cv2.rectangle(
+        frame,
+        (panel_x, panel_y),
+        (panel_x + panel_w, panel_y + panel_h),
+        border_color,
+        2,
+    )
+
+    text_x = panel_x + pad_x
+    if text_w > panel_w - pad_x * 2:
+        text_x = panel_x + 8
+    text_y = panel_y + pad_y + text_h
+    cv2.putText(
+        frame,
+        text,
+        (text_x, text_y),
+        font,
+        font_scale,
+        (255, 255, 255),
+        thickness,
         cv2.LINE_AA,
     )
 
@@ -470,7 +648,11 @@ def post_json(
         return False, f"Dispatch request failed: {exc.reason}", None
 
 
-def build_live_signal_payload(args: argparse.Namespace, signal: CVSignal) -> dict[str, object]:
+def build_live_signal_payload(
+    args: argparse.Namespace,
+    signal: CVSignal,
+    victim_snapshot: Optional[dict[str, object]] = None,
+) -> dict[str, object]:
     payload: dict[str, object] = {
         "signal": signal.to_dict(),
         "sourceDeviceId": args.source_device_id,
@@ -493,6 +675,9 @@ def build_live_signal_payload(args: argparse.Namespace, signal: CVSignal) -> dic
         if args.location_indoor.strip():
             location_payload["indoorDescriptor"] = args.location_indoor.strip()
         payload["location"] = location_payload
+
+    if victim_snapshot is not None:
+        payload["victimSnapshot"] = victim_snapshot
 
     return payload
 
@@ -541,33 +726,41 @@ def build_victim_snapshot_payload(
     timestamp_ms: int,
     lying_confidence: float,
     eyes_closed_confidence: float,
+    trigger_reason: Optional[str] = None,
+    max_width: int = 960,
+    jpeg_quality: int = 84,
 ) -> Optional[dict[str, object]]:
     frame_h, frame_w = frame_bgr.shape[:2]
     resized = frame_bgr
-    if frame_w > 960:
-        target_w = 960
+    if frame_w > max_width:
+        target_w = max_width
         target_h = max(1, int(frame_h * (target_w / frame_w)))
         resized = cv2.resize(frame_bgr, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
     ok, encoded = cv2.imencode(
         ".jpg",
         resized,
-        [int(cv2.IMWRITE_JPEG_QUALITY), 84],
+        [int(cv2.IMWRITE_JPEG_QUALITY), int(max(50, min(95, jpeg_quality)))],
     )
     if not ok:
         return None
 
     encoded_b64 = base64.b64encode(encoded.tobytes()).decode("ascii")
     image_data_url = f"data:image/jpeg;base64,{encoded_b64}"
+    reason = (
+        trigger_reason
+        if trigger_reason is not None
+        else (
+            "person_down_trigger "
+            f"(lying={lying_confidence:.2f}, eyesClosed={eyes_closed_confidence:.2f})"
+        )
+    )
 
     return {
         "imageDataUrl": image_data_url,
         "capturedAtIso": datetime.now(timezone.utc).isoformat(),
         "frameTimestampMs": int(timestamp_ms),
-        "triggerReason": (
-            "lying>0.60 && eyesClosed>0.80 "
-            f"(lying={lying_confidence:.2f}, eyesClosed={eyes_closed_confidence:.2f})"
-        ),
+        "triggerReason": reason,
     }
 
 
@@ -628,9 +821,16 @@ def main() -> int:
 
     bpm_estimator = BpmEstimator()
     target_stabilizer = CprTargetStabilizer(max_fallback_frames=args.max_fallback_frames)
+    eyes_conf_smoother = TemporalConfidenceSmoother(rise_alpha=0.54, fall_alpha=0.20)
+    lying_conf_smoother = TemporalConfidenceSmoother(rise_alpha=0.46, fall_alpha=0.16)
     last_json_print_ms = 0
     last_live_post_ms = 0
     live_post_status = "live stream disabled"
+    trigger_arm_streak = 0
+    trigger_disarm_streak = 0
+    trigger_latched = False
+    live_snapshot_cache: Optional[dict[str, object]] = None
+    last_live_snapshot_ms = 0
 
     model_dir = Path(args.model_dir)
     pose_landmarker, hand_landmarker, face_landmarker = create_landmarkers(model_dir)
@@ -677,7 +877,13 @@ def main() -> int:
             body_posture, posture_confidence, torso_incline_deg = estimate_body_posture(
                 pose_result.pose_landmarks[0] if pose_result.pose_landmarks else None
             )
-            eyes_closed_confidence = estimate_eyes_closed_confidence(face_result)
+            raw_eyes_closed_confidence = estimate_eyes_closed_confidence(face_result)
+            eyes_closed_confidence = eyes_conf_smoother.update(raw_eyes_closed_confidence)
+            raw_lying_confidence = posture_confidence if body_posture == "lying" else 0.0
+            lying_confidence_smoothed = lying_conf_smoother.update(raw_lying_confidence)
+            posture_confidence_for_signal = (
+                lying_confidence_smoothed if body_posture == "lying" else posture_confidence
+            )
 
             signal = CVSignal(
                 handPlacementStatus=placement_status,
@@ -687,18 +893,78 @@ def main() -> int:
                 visibility=visibility,
                 frameTimestampMs=now_ms(),
                 bodyPosture=body_posture,
-                postureConfidence=round(posture_confidence, 3),
+                postureConfidence=round(posture_confidence_for_signal, 3),
                 eyesClosedConfidence=round(eyes_closed_confidence, 3),
                 torsoInclineDeg=round(torso_incline_deg, 1),
             )
             cv_assist = evaluate_cv_hook(CvHookRequest(signal=signal))
             lying_confidence = signal.postureConfidence if signal.bodyPosture == "lying" else 0.0
-            trigger_ready = lying_confidence > 0.60 and signal.eyesClosedConfidence > 0.80
+
+            trigger_arm_condition = (
+                lying_confidence >= 0.58
+                and (
+                    signal.eyesClosedConfidence >= 0.40
+                    or (signal.visibility != "poor" and signal.placementConfidence >= 0.55)
+                    or signal.compressionRateBpm >= 90
+                )
+            )
+            trigger_disarm_condition = (
+                lying_confidence < 0.36
+                and signal.eyesClosedConfidence < 0.22
+                and signal.compressionRateBpm < 80
+            )
+
+            if trigger_arm_condition:
+                trigger_arm_streak = min(trigger_arm_streak + 1, 12)
+            else:
+                trigger_arm_streak = max(0, trigger_arm_streak - 1)
+
+            if trigger_disarm_condition:
+                trigger_disarm_streak = min(trigger_disarm_streak + 1, 20)
+            else:
+                trigger_disarm_streak = max(0, trigger_disarm_streak - 1)
+
+            if not trigger_latched and trigger_arm_streak >= 3:
+                trigger_latched = True
+            if trigger_latched and trigger_disarm_streak >= 8:
+                trigger_latched = False
+
+            trigger_ready = trigger_latched
+
+            if (
+                cv_assist.personDownHint.status in {"possible", "likely"}
+                and signal.frameTimestampMs - last_live_snapshot_ms >= 1_200
+            ):
+                live_snapshot_cache = build_victim_snapshot_payload(
+                    frame,
+                    signal.frameTimestampMs,
+                    lying_confidence=lying_confidence,
+                    eyes_closed_confidence=signal.eyesClosedConfidence,
+                    trigger_reason=(
+                        "live_cv_person_down "
+                        f"(status={cv_assist.personDownHint.status}, "
+                        f"confidence={cv_assist.personDownHint.confidence:.2f})"
+                    ),
+                    max_width=720,
+                    jpeg_quality=78,
+                )
+                if live_snapshot_cache is not None:
+                    last_live_snapshot_ms = signal.frameTimestampMs
 
             if live_signal_url and signal.frameTimestampMs - last_live_post_ms >= max(
                 250, args.post_interval_ms
             ):
-                live_payload = build_live_signal_payload(args, signal)
+                payload_snapshot: Optional[dict[str, object]] = None
+                if live_snapshot_cache is not None:
+                    snapshot_ts = live_snapshot_cache.get("frameTimestampMs")
+                    if (
+                        isinstance(snapshot_ts, int)
+                        and signal.frameTimestampMs - snapshot_ts <= 12_000
+                    ):
+                        payload_snapshot = live_snapshot_cache
+                live_payload = build_live_signal_payload(
+                    args, signal, victim_snapshot=payload_snapshot
+                )
                 posted, post_status = post_live_signal(live_signal_url, live_payload)
                 live_post_status = post_status if posted else post_status
                 last_live_post_ms = signal.frameTimestampMs
@@ -711,6 +977,11 @@ def main() -> int:
                         signal.frameTimestampMs,
                         lying_confidence=lying_confidence,
                         eyes_closed_confidence=signal.eyesClosedConfidence,
+                        trigger_reason=(
+                            "questionnaire_trigger "
+                            f"(lying={lying_confidence:.2f}, eyes={signal.eyesClosedConfidence:.2f}, "
+                            f"placement={signal.placementConfidence:.2f}, bpm={signal.compressionRateBpm})"
+                        ),
                     )
                     if victim_snapshot is None:
                         print("Warning: unable to capture victim snapshot at trigger moment.")
@@ -719,7 +990,7 @@ def main() -> int:
                     trigger_ready=trigger_ready,
                     timestamp_ms=signal.frameTimestampMs,
                     status=(
-                        "Trigger detected (lying>0.60 and eyes-closed>0.80). "
+                        "Trigger detected (sustained person-down evidence). "
                         "Press H to start questionnaire."
                     ),
                     victim_snapshot=victim_snapshot,
@@ -775,6 +1046,15 @@ def main() -> int:
                     )
 
             frame_h, frame_w = frame.shape[:2]
+            placement_confirmed = (
+                signal.handPlacementStatus == "correct" and signal.placementConfidence >= 0.68
+            )
+            ready_for_compressions = (
+                chest_target is not None
+                and stabilized_target.isLocked
+                and signal.visibility in {"full", "partial"}
+                and placement_confirmed
+            )
             if chest_target is not None:
                 draw_cpr_hand_target(
                     frame,
@@ -784,21 +1064,26 @@ def main() -> int:
                 )
 
             if hand_center is not None:
-                hand_px = (int(hand_center.x * frame_w), int(hand_center.y * frame_h))
-                cv2.circle(frame, hand_px, 8, (0, 200, 255), -1)
-                cv2.putText(
+                draw_detected_hand_locator(
                     frame,
-                    "hand",
-                    (hand_px[0] + 10, hand_px[1]),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 200, 255),
-                    1,
-                    cv2.LINE_AA,
+                    hand_center=hand_center,
+                    chest_target=chest_target,
+                    placement_status=signal.handPlacementStatus,
+                    placement_confidence=signal.placementConfidence,
+                    ready_for_compressions=ready_for_compressions,
                 )
+
+            draw_compression_readiness_banner(
+                frame,
+                hand_visible=hand_center is not None,
+                ready_for_compressions=ready_for_compressions,
+                placement_status=signal.handPlacementStatus,
+                placement_confidence=signal.placementConfidence,
+            )
 
             status_lines = [
                 f"placement: {signal.handPlacementStatus} ({signal.placementConfidence:.2f})",
+                f"compression_ready: {'yes' if ready_for_compressions else 'no'}",
                 f"bpm: {signal.compressionRateBpm}",
                 f"rhythm: {signal.compressionRhythmQuality}",
                 f"visibility: {signal.visibility}",
@@ -814,7 +1099,8 @@ def main() -> int:
                 (
                     "hitl_trigger: "
                     f"{'ready' if trigger_ready else 'idle'} "
-                    f"(lying={lying_confidence:.2f}, eyes={signal.eyesClosedConfidence:.2f})"
+                    f"(lying={lying_confidence:.2f}, eyes={signal.eyesClosedConfidence:.2f}, "
+                    f"arm={trigger_arm_streak}, disarm={trigger_disarm_streak})"
                 ),
                 f"target_lock: {'locked' if stabilized_target.isLocked else 'tracking'}",
                 f"api_stream: {live_post_status}",
