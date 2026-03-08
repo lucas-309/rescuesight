@@ -12,6 +12,7 @@ React Native (Expo) emergency frontend for iPhone/tablet demos.
    - `POST /api/cv/live-signal` (iPhone camera frames)
    - `GET /api/cv/live-summary`
 5. Opens live emergency assistance dashboard.
+6. Includes in-app ElevenLabs voice assistant panel fed by live CV context.
 
 ## Run
 
@@ -68,6 +69,33 @@ For this repo's local Python CV service, use:
 ```bash
 EXPO_PUBLIC_CV_MODEL_FRAME_URL="http://<LAN_IP>:8091/api/cv/frame"
 ```
+
+## Voice Agent (Mobile)
+
+The connected dashboard now includes a **Voice Agent** panel that opens an in-app ElevenLabs ConvAI session.
+
+Default agent id:
+- `agent_0701kk51qtqvfm1v00ah9c5hvfcx`
+
+Override agent id if needed:
+
+```bash
+EXPO_PUBLIC_ELEVENLABS_AGENT_ID="<your_agent_id>" npm run dev:mobile
+```
+
+Voice panel requirements:
+
+```bash
+npx expo install react-native-webview
+```
+
+Usage:
+
+1. Start emergency session until dashboard is connected.
+2. Open **Voice Agent** panel.
+3. Tap **Open Voice CPR Guide**.
+4. In modal, tap **Start** and allow microphone access.
+5. Speak naturally; the assistant receives live CV context.
 
 ## Web mirror dependencies
 

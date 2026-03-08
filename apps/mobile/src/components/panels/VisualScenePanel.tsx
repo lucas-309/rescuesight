@@ -114,15 +114,21 @@ export const VisualScenePanel = ({ summary, sessionId }: VisualScenePanelProps) 
   }, [permission?.granted, pushCameraFrame]);
 
   const cameraUnavailable = !permission || !permission.granted;
-  const personDownLabel = summary
-    ? `${summary.personDownSignal.status} (${Math.round(summary.personDownSignal.confidence * 100)}%)`
-    : "Awaiting model inference";
-  const handPlacementLabel = summary?.signal.handPlacementStatus ?? "unknown";
+  const activeSignal = latestSignal ?? summary?.signal ?? null;
+  const personDownDisplay = inferPersonDownDisplay(activeSignal, summary, latestAssist);
   const compressionLabel =
-    summary && summary.signal.compressionRateBpm > 0
-      ? `${Math.round(summary.signal.compressionRateBpm)} bpm`
+    activeSignal && activeSignal.compressionRateBpm > 0
+      ? `${Math.round(activeSignal.compressionRateBpm)} bpm`
       : "No compression rhythm yet";
-  const placementStatus = modelOverlay?.placementStatus ?? handPlacementLabel;
+  const placementStatus = modelOverlay?.placementStatus ?? activeSignal?.handPlacementStatus ?? "unknown";
+  const placementConfidence =
+    modelOverlay?.placementConfidence ?? activeSignal?.placementConfidence ?? 0;
+  const visibility = modelOverlay?.visibility ?? activeSignal?.visibility ?? "poor";
+  const placementInstruction =
+    latestAssist?.handPlacementHint.message ??
+    modelOverlay?.placementInstruction ??
+    placementInstructionForStatus(placementStatus);
+  const targetLocked = modelOverlay?.targetLocked ?? Boolean(modelOverlay?.chestTarget);
   const placementColor = getPlacementColor(placementStatus);
   const targetCenter = modelOverlay?.chestTarget
     ? {
@@ -136,6 +142,19 @@ export const VisualScenePanel = ({ summary, sessionId }: VisualScenePanelProps) 
         y: clamp01(modelOverlay.handCenter.y) * viewportSize.height,
       }
     : null;
+  const explicitDistanceLine =
+    modelOverlay?.distanceLine && viewportSize.width > 1 && viewportSize.height > 1
+      ? {
+          start: {
+            x: clamp01(modelOverlay.distanceLine.start.x) * viewportSize.width,
+            y: clamp01(modelOverlay.distanceLine.start.y) * viewportSize.height,
+          },
+          end: {
+            x: clamp01(modelOverlay.distanceLine.end.x) * viewportSize.width,
+            y: clamp01(modelOverlay.distanceLine.end.y) * viewportSize.height,
+          },
+        }
+      : null;
   const targetSize =
     modelOverlay?.chestTarget !== null && modelOverlay?.chestTarget !== undefined
       ? Math.max(
@@ -143,26 +162,85 @@ export const VisualScenePanel = ({ summary, sessionId }: VisualScenePanelProps) 
           Math.min(118, Math.min(viewportSize.width, viewportSize.height) * modelOverlay.chestTarget.palmScale * 3.3),
         )
       : 78;
+  const connectorMetrics =
+    explicitDistanceLine
+      ? buildConnectorMetrics(explicitDistanceLine.start, explicitDistanceLine.end)
+      : handCenter && targetCenter
+        ? buildConnectorMetrics(handCenter, targetCenter)
+        : null;
+  const distancePalmWidths =
+    modelOverlay?.distanceEstimate?.palmWidths ??
+    (connectorMetrics ? connectorMetrics.length / Math.max(1, targetSize) : null);
+  const readyForCompressions =
+    modelOverlay?.readyForCompressions ??
+    Boolean(
+      handCenter &&
+        targetCenter &&
+        targetLocked &&
+        placementStatus === "correct" &&
+        placementConfidence >= 0.68 &&
+        (visibility === "full" || visibility === "partial"),
+    );
+  const readinessText = readyForCompressions
+    ? "HAND POSITION CONFIRMED. START CHEST COMPRESSIONS NOW."
+    : `${placementInstruction} Confidence: ${placementConfidence.toFixed(2)}`;
   const showStaticCrosshair = !targetCenter;
   const overlay = (
     <View pointerEvents="none" style={styles.overlayLayer}>
-      <View style={styles.overlayBadge}>
-        <Text style={styles.overlayBadgeText}>AR Overlay Active</Text>
-      </View>
-      <View style={styles.overlayTopRow}>
-        <View style={[styles.overlayTag, styles.overlayTagPrimary]}>
-          <Text style={styles.overlayText}>Patient status: {personDownLabel}</Text>
+      <View style={styles.hudTop}>
+        <View style={styles.overlayBadge}>
+          <Text style={styles.overlayBadgeText}>AR Overlay Active</Text>
         </View>
-        <View style={[styles.overlayTag, styles.overlayTagSecondary]}>
-          <Text style={styles.overlayText}>Hand placement: {placementStatus}</Text>
+        <View style={styles.overlayTopRow}>
+          <View style={[styles.overlayTag, styles.overlayTagPrimary]}>
+            <Text style={styles.overlayText}>
+              Patient: {personDownDisplay.status} ({Math.round(personDownDisplay.confidence * 100)}%)
+            </Text>
+          </View>
+          <View style={[styles.overlayTag, styles.overlayTagSecondary]}>
+            <Text style={styles.overlayText}>
+              Hand: {placementStatus} ({placementConfidence.toFixed(2)})
+            </Text>
+          </View>
+          {distancePalmWidths !== null ? (
+            <View style={[styles.overlayTag, styles.overlayTagDistance]}>
+              <Text style={styles.overlayText}>
+                Offset: {distancePalmWidths.toFixed(2)} palms
+              </Text>
+            </View>
+          ) : null}
+        </View>
+        <View
+          style={[
+            styles.readinessBanner,
+            readyForCompressions ? styles.readinessBannerReady : styles.readinessBannerAdjust,
+          ]}
+        >
+          <Text style={styles.readinessText}>{readinessText}</Text>
         </View>
       </View>
       <View style={styles.centerTarget}>
         {showStaticCrosshair ? <View style={styles.crosshair} /> : null}
       </View>
       <View style={styles.bottomHint}>
-        <Text style={styles.bottomHintText}>Compression: {compressionLabel}</Text>
+        <Text style={styles.bottomHintText}>
+          Compression: {compressionLabel} | Visibility: {visibility}
+        </Text>
       </View>
+      {connectorMetrics ? (
+        <View
+          style={[
+            styles.connectorLine,
+            {
+              left: connectorMetrics.midX - connectorMetrics.length / 2,
+              top: connectorMetrics.midY - 1.5,
+              width: connectorMetrics.length,
+              transform: [{ rotate: `${connectorMetrics.angleDeg}deg` }],
+              backgroundColor: readyForCompressions ? "#5AF0AA" : "#74D6FF",
+            },
+          ]}
+        />
+      ) : null}
       {targetCenter ? (
         <View
           style={[
@@ -185,12 +263,13 @@ export const VisualScenePanel = ({ summary, sessionId }: VisualScenePanelProps) 
           style={[
             styles.handMarker,
             {
-              left: handCenter.x - 10,
-              top: handCenter.y - 10,
+              left: handCenter.x - 16,
+              top: handCenter.y - 16,
               backgroundColor: placementColor,
             },
-          ]}
-        />
+          ]}>
+          <View style={styles.handMarkerInner} />
+        </View>
       ) : null}
     </View>
   );
@@ -256,6 +335,10 @@ const styles = StyleSheet.create({
     zIndex: 3,
     elevation: 8,
   },
+  hudTop: {
+    alignSelf: "stretch",
+    gap: 6,
+  },
   overlayBadge: {
     alignSelf: "flex-start",
     borderRadius: 8,
@@ -273,6 +356,9 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   overlayTopRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
     gap: 8,
   },
   placeholder: {
@@ -317,10 +403,35 @@ const styles = StyleSheet.create({
     borderColor: "rgba(244, 160, 25, 0.8)",
     backgroundColor: "rgba(64, 44, 10, 0.62)",
   },
+  overlayTagDistance: {
+    borderColor: "rgba(158, 201, 255, 0.82)",
+    backgroundColor: "rgba(28, 46, 82, 0.62)",
+  },
   overlayText: {
     color: palette.textPrimary,
     fontSize: 11,
     fontWeight: "700",
+  },
+  readinessBanner: {
+    alignSelf: "stretch",
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  readinessBannerReady: {
+    borderColor: "rgba(98, 240, 154, 0.85)",
+    backgroundColor: "rgba(22, 92, 48, 0.72)",
+  },
+  readinessBannerAdjust: {
+    borderColor: "rgba(236, 230, 128, 0.85)",
+    backgroundColor: "rgba(68, 64, 18, 0.72)",
+  },
+  readinessText: {
+    color: palette.textPrimary,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 15,
   },
   centerTarget: {
     alignItems: "center",
@@ -349,13 +460,29 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     backgroundColor: "rgba(255,255,255,0.1)",
   },
+  connectorLine: {
+    position: "absolute",
+    height: 3,
+    borderRadius: 2,
+    opacity: 0.9,
+  },
   handMarker: {
     position: "absolute",
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     borderWidth: 2,
     borderColor: "rgba(255,255,255,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  handMarkerInner: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.95)",
+    backgroundColor: "rgba(10,14,18,0.28)",
   },
   bottomHint: {
     alignSelf: "center",
@@ -449,6 +576,26 @@ const blendOverlay = (previous: CvModelOverlay | null, next: CvModelOverlay | nu
     ...next,
     handCenter,
     chestTarget,
+    distanceLine:
+      handCenter && chestTarget
+        ? {
+            start: { ...handCenter },
+            end: { ...chestTarget.center },
+          }
+        : null,
+    distanceEstimate:
+      handCenter && chestTarget
+        ? {
+            normalized: Math.hypot(handCenter.x - chestTarget.center.x, handCenter.y - chestTarget.center.y),
+            palmWidths:
+              Math.hypot(handCenter.x - chestTarget.center.x, handCenter.y - chestTarget.center.y) /
+              Math.max(chestTarget.palmScale, 1e-4),
+            delta: {
+              x: handCenter.x - chestTarget.center.x,
+              y: handCenter.y - chestTarget.center.y,
+            },
+          }
+        : null,
   };
 };
 
@@ -460,4 +607,134 @@ const getPlacementColor = (placementStatus: string): string => {
     return "#9FB4CC";
   }
   return "#F7B733";
+};
+
+const placementInstructionForStatus = (placementStatus: string): string => {
+  if (placementStatus === "correct") {
+    return "Hand placement confirmed.";
+  }
+  if (placementStatus === "too_left") {
+    return "Move hand slightly right to match target.";
+  }
+  if (placementStatus === "too_right") {
+    return "Move hand slightly left to match target.";
+  }
+  if (placementStatus === "too_high") {
+    return "Move hand slightly lower on sternum.";
+  }
+  if (placementStatus === "too_low") {
+    return "Move hand slightly higher on sternum.";
+  }
+  return "Keep torso and hands fully visible to reacquire.";
+};
+
+const inferPersonDownHintFromSignal = (
+  signal: XrCvSignalInput | null,
+): { status: "likely" | "possible" | "unclear"; confidence: number } => {
+  if (!signal) {
+    return { status: "unclear", confidence: 0 };
+  }
+
+  let confidence = 0.05;
+  const posture = signal.bodyPosture ?? "unknown";
+  const postureConfidence = clamp01(signal.postureConfidence ?? 0);
+  const eyesClosedConfidence = clamp01(signal.eyesClosedConfidence ?? 0);
+  const hasCprPattern =
+    signal.handPlacementStatus !== "unknown" &&
+    clamp01(signal.placementConfidence) >= 0.55 &&
+    signal.compressionRateBpm >= 85 &&
+    signal.compressionRhythmQuality !== "unknown";
+
+  if (posture === "lying") {
+    confidence += 0.2 + 0.42 * postureConfidence;
+  } else if (posture === "sitting") {
+    confidence -= 0.2 * Math.max(0.3, postureConfidence);
+  } else if (posture === "upright") {
+    confidence -= 0.28 * Math.max(0.3, postureConfidence);
+  }
+
+  if (eyesClosedConfidence >= 0.4) {
+    confidence += 0.16 * eyesClosedConfidence;
+  } else if (eyesClosedConfidence >= 0.2) {
+    confidence += 0.06 * eyesClosedConfidence;
+  }
+
+  if (signal.visibility === "full") {
+    confidence += 0.12;
+  } else if (signal.visibility === "partial") {
+    confidence += 0.06;
+  }
+
+  if (signal.handPlacementStatus !== "unknown") {
+    confidence += 0.12 * clamp01(signal.placementConfidence);
+  }
+  if (signal.compressionRateBpm >= 85) {
+    confidence += 0.2;
+  }
+  if (signal.compressionRhythmQuality !== "unknown") {
+    confidence += 0.08;
+  }
+  if (hasCprPattern) {
+    confidence += 0.24;
+  }
+
+  if (signal.visibility === "poor") {
+    confidence = Math.min(confidence, 0.35);
+  }
+  if (
+    (posture === "upright" || posture === "sitting") &&
+    postureConfidence >= 0.75 &&
+    eyesClosedConfidence < 0.45 &&
+    !hasCprPattern
+  ) {
+    confidence = Math.min(confidence, 0.35);
+  }
+
+  const bounded = clamp01(confidence);
+  if (bounded >= 0.6) {
+    return { status: "likely", confidence: bounded };
+  }
+  if (bounded >= 0.4) {
+    return { status: "possible", confidence: bounded };
+  }
+  return { status: "unclear", confidence: bounded };
+};
+
+const inferPersonDownDisplay = (
+  signal: XrCvSignalInput | null,
+  summary: CvLiveSummary | null,
+  cvAssist: CvAssistHints | null,
+): { status: "likely" | "possible" | "unclear"; confidence: number } => {
+  if (cvAssist?.personDownHint) {
+    return {
+      status: cvAssist.personDownHint.status,
+      confidence: clamp01(cvAssist.personDownHint.confidence),
+    };
+  }
+  if (summary?.personDownSignal) {
+    const confidence = clamp01(summary.personDownSignal.confidence);
+    if (summary.personDownSignal.status === "person_down") {
+      return { status: confidence >= 0.6 ? "likely" : "possible", confidence };
+    }
+    if (summary.personDownSignal.status === "uncertain") {
+      return { status: "possible", confidence: Math.max(confidence, 0.4) };
+    }
+    return { status: "unclear", confidence };
+  }
+  return inferPersonDownHintFromSignal(signal);
+};
+
+const buildConnectorMetrics = (
+  fromPoint: { x: number; y: number },
+  toPoint: { x: number; y: number },
+): { length: number; angleDeg: number; midX: number; midY: number } => {
+  const deltaX = toPoint.x - fromPoint.x;
+  const deltaY = toPoint.y - fromPoint.y;
+  const length = Math.max(1, Math.hypot(deltaX, deltaY));
+  return {
+    length,
+    angleDeg: (Math.atan2(deltaY, deltaX) * 180) / Math.PI,
+    midX: (fromPoint.x + toPoint.x) * 0.5,
+    midY: (fromPoint.y + toPoint.y) * 0.5,
+  };
 };

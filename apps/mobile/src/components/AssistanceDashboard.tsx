@@ -4,6 +4,7 @@ import { CvStatusPanel } from "./panels/CvStatusPanel";
 import { GuidancePanel } from "./panels/GuidancePanel";
 import { SessionInfoPanel } from "./panels/SessionInfoPanel";
 import { VisualScenePanel } from "./panels/VisualScenePanel";
+import { VoiceAgentPanel } from "./panels/VoiceAgentPanel";
 import { palette } from "../theme/palette";
 import { formatDateTime } from "../utils/format";
 
@@ -42,6 +43,7 @@ export const AssistanceDashboard = ({
           </View>
           <View style={styles.rightColumn}>
             <GuidancePanel />
+            <VoiceAgentPanel summary={summary} />
             <SessionInfoPanel
               summary={summary}
               connectedAtIso={connectedAtIso}
@@ -55,6 +57,7 @@ export const AssistanceDashboard = ({
           <VisualScenePanel summary={summary} sessionId={sessionId} />
           <CvStatusPanel summary={summary} connectedAtIso={connectedAtIso} />
           <GuidancePanel />
+          <VoiceAgentPanel summary={summary} />
           <SessionInfoPanel
             summary={summary}
             connectedAtIso={connectedAtIso}

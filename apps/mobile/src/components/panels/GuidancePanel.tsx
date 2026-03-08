@@ -9,8 +9,8 @@ export const GuidancePanel = () => (
     <GuidanceRow label="Recommended action" value="Prepare for guided CPR hand placement workflow" />
     <GuidanceRow label="Next instruction" value="Awaiting first confirmed body landmark lock from CV model" />
     <Text style={styles.note}>
-      Conversation AI is intentionally not enabled in this build. This panel is the future extension
-      point for live guidance instructions.
+      Live voice guidance is available in the Voice Agent panel. Keep this overlay visible for
+      visual + voice cue coordination.
     </Text>
   </PanelCard>
 );
