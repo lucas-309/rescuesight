@@ -1,0 +1,15 @@
+export const palette = {
+  background: "#060A12",
+  backgroundAlt: "#0B121E",
+  panel: "rgba(22, 31, 48, 0.86)",
+  panelBorder: "rgba(255, 255, 255, 0.12)",
+  textPrimary: "#F2F8FF",
+  textSecondary: "#9CB0C9",
+  emergency: "#D6323D",
+  emergencyPressed: "#B4272F",
+  amber: "#F4A019",
+  cyan: "#34D0E3",
+  success: "#3ED18A",
+  warning: "#F7B733",
+  danger: "#FF6B6B",
+};

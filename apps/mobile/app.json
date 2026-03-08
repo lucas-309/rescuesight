@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "RescueSight Emergency",
+    "slug": "rescuesight-emergency",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "RescueSight uses the camera to stream live frames to the CV emergency model."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#070b12"
+      },
+      "permissions": ["CAMERA"]
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
