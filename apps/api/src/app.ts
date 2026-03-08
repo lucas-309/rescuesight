@@ -609,6 +609,58 @@ export const buildApp = (options: BuildAppOptions = {}) => {
 
     const payload = req.body as CreateDispatchRequest;
     const request = dispatchStore.createDispatchRequest(payload);
+    const compatibilitySession = sessionStore.createSession({
+      source: "api",
+      sourceDeviceId: latestCvLiveSummary?.sourceDeviceId,
+      location: payload.location,
+    });
+    const compatibilitySoap = buildSoapReportFromContext(
+      payload.questionnaire,
+      latestCvLiveSummary ?? undefined,
+      payload.location,
+    );
+    sessionStore.submitQuestionnaire(
+      compatibilitySession.id,
+      { questionnaire: payload.questionnaire },
+      compatibilitySoap,
+    );
+    sessionStore.recordLiveSummary(
+      compatibilitySession.id,
+      latestCvLiveSummary ?? {
+        updatedAtIso: new Date().toISOString(),
+        signal: payload.personDownSignal.frameTimestampMs
+          ? {
+              handPlacementStatus: "unknown",
+              placementConfidence: 0,
+              compressionRateBpm: 0,
+              compressionRhythmQuality: "unknown",
+              visibility: "poor",
+              frameTimestampMs: payload.personDownSignal.frameTimestampMs,
+              bodyPosture: "unknown",
+              postureConfidence: 0,
+              eyesClosedConfidence: 0,
+            }
+          : {
+              handPlacementStatus: "unknown",
+              placementConfidence: 0,
+              compressionRateBpm: 0,
+              compressionRhythmQuality: "unknown",
+              visibility: "poor",
+              frameTimestampMs: Date.now(),
+              bodyPosture: "unknown",
+              postureConfidence: 0,
+              eyesClosedConfidence: 0,
+            },
+        personDownSignal: payload.personDownSignal,
+        victimSnapshot: payload.victimSnapshot,
+        summaryText: `Dispatch created from compatibility route (${payload.personDownSignal.status} ${payload.personDownSignal.confidence.toFixed(2)}).`,
+        safetyNotice:
+          "Compatibility CV summary synthesized for legacy /api/dispatch/requests route.",
+        location: payload.location,
+        sourceDeviceId: latestCvLiveSummary?.sourceDeviceId,
+      },
+    );
+    sessionStore.attachDispatchRequest(compatibilitySession.id, request);
     res.status(201).json({
       request,
       backendEscalation: {
@@ -660,6 +712,7 @@ export const buildApp = (options: BuildAppOptions = {}) => {
       return;
     }
 
+    sessionStore.syncDispatchRequest(updated);
     res.json({ request: updated });
   });
 
@@ -922,5 +975,5 @@ export const buildApp = (options: BuildAppOptions = {}) => {
     });
   });
 
-  return { app, incidentStore };
+  return { app, incidentStore, sessionStore };
 };
