@@ -1211,6 +1211,9 @@ def main() -> int:
                     )
                     if victim_snapshot is None:
                         print("Warning: unable to capture victim snapshot at trigger moment.")
+                    else:
+                        # Keep checklist snapshot state in sync even before questionnaire start.
+                        questionnaire.pending_victim_snapshot = victim_snapshot
 
                 started = questionnaire.set_auto_prompt_ready(
                     trigger_ready=trigger_ready,
@@ -1337,7 +1340,10 @@ def main() -> int:
             draw_status_panel(frame, status_lines)
 
             if hitl_enabled:
-                checklist_snapshot_ready = questionnaire.pending_victim_snapshot is not None
+                checklist_snapshot_ready = (
+                    questionnaire.pending_victim_snapshot is not None
+                    or questionnaire.last_submission_success is True
+                )
                 checklist_questionnaire_ready = (
                     questionnaire.completed_answers is not None
                     or questionnaire.last_submission_success is True

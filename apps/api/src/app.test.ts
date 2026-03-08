@@ -267,6 +267,11 @@ describe("RescueSight API routes", () => {
       session: { events: Array<{ type: string }> };
     };
     assert.ok(soapGenerateBody.soapReport?.combinedText.includes("SOAP REPORT"));
+    assert.match(soapGenerateBody.soapReport?.combinedText ?? "", /Scene location is Main lobby/);
+    assert.match(
+      soapGenerateBody.soapReport?.combinedText ?? "",
+      /Snapshot image data is available on the dashboard case record/,
+    );
     assert.equal(
       soapGenerateBody.session.events.some((event) => event.type === "soap_generated"),
       true,

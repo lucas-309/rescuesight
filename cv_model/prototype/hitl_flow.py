@@ -130,6 +130,8 @@ class HitlQuestionnaireSession:
         self.auto_prompt_ready = False
         self.manual_start_confirmation_pending = False
         self.pending_victim_snapshot = None
+        self.last_submission_success = None
+        self.last_submission_request_id = None
         self.last_status = status
 
     def handle_key(self, key: int, timestamp_ms: int) -> bool:

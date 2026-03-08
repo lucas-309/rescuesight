@@ -175,8 +175,27 @@ const buildSoapReportFromContext = (
   questionnaire: CreateDispatchRequest["questionnaire"],
   liveSummary: CvLiveSummary | undefined,
   location: CreateDispatchRequest["location"] | undefined,
+  victimSnapshot: CreateDispatchRequest["victimSnapshot"] | undefined,
 ): EmergencySoapReport => {
   const nowIso = new Date().toISOString();
+  const responsivenessText =
+    questionnaire.responsiveness === "responsive"
+      ? "responsive to bystander interaction"
+      : questionnaire.responsiveness === "unresponsive"
+      ? "unresponsive"
+      : "of unknown responsiveness";
+  const breathingText =
+    questionnaire.breathing === "normal"
+      ? "normal"
+      : questionnaire.breathing === "abnormal_or_absent"
+      ? "abnormal or absent"
+      : "unknown";
+  const pulseText =
+    questionnaire.pulse === "present"
+      ? "present"
+      : questionnaire.pulse === "absent"
+      ? "absent"
+      : "not confirmed";
   const likelyCardiacArrest =
     questionnaire.responsiveness === "unresponsive" &&
     questionnaire.breathing === "abnormal_or_absent";
@@ -187,50 +206,107 @@ const buildSoapReportFromContext = (
     questionnaire.majorTrauma;
   const acuity: EmergencySoapReport["acuity"] = critical ? "critical" : "high";
 
+  const subjectiveRiskDetails: string[] = [];
+  if (questionnaire.severeBleeding) {
+    subjectiveRiskDetails.push("severe bleeding was reported");
+  }
+  if (questionnaire.majorTrauma) {
+    subjectiveRiskDetails.push("major trauma is suspected");
+  }
+
   const subjective = [
-    `Responsiveness=${questionnaire.responsiveness}, breathing=${questionnaire.breathing}, pulse=${questionnaire.pulse}.`,
-    `Severe bleeding=${questionnaire.severeBleeding ? "yes" : "no"}, major trauma=${questionnaire.majorTrauma ? "yes" : "no"}.`,
-    questionnaire.notes?.trim() ? `Notes: ${questionnaire.notes.trim()}` : "Notes: none provided.",
+    `Bystander questionnaire indicates the patient is ${responsivenessText} with ${breathingText} breathing and a pulse reported as ${pulseText}.`,
+    subjectiveRiskDetails.length > 0
+      ? `Additional bystander concerns include ${subjectiveRiskDetails.join(" and ")}.`
+      : "No severe bleeding or major trauma concerns were reported by the bystander.",
+    questionnaire.notes?.trim()
+      ? `Bystander notes: ${questionnaire.notes.trim()}`
+      : "No additional bystander notes were provided.",
   ].join(" ");
 
-  const objectiveParts: string[] = [];
+  const objectiveSentences: string[] = [];
+  const resolvedSnapshot = liveSummary?.victimSnapshot ?? victimSnapshot;
   if (liveSummary) {
-    objectiveParts.push(
-      `CV person-down=${liveSummary.personDownSignal.status} (${liveSummary.personDownSignal.confidence.toFixed(2)}).`,
+    objectiveSentences.push(
+      `Computer-vision telemetry indicates a person-down state of ${liveSummary.personDownSignal.status} at confidence ${liveSummary.personDownSignal.confidence.toFixed(2)}.`,
     );
-    objectiveParts.push(
-      `Posture=${liveSummary.signal.bodyPosture ?? "unknown"} (${(liveSummary.signal.postureConfidence ?? 0).toFixed(2)}), eyesClosed=${(liveSummary.signal.eyesClosedConfidence ?? 0).toFixed(2)}.`,
+    objectiveSentences.push(
+      `Observed posture is ${liveSummary.signal.bodyPosture ?? "unknown"} with posture confidence ${(liveSummary.signal.postureConfidence ?? 0).toFixed(2)} and eyes-closed confidence ${(liveSummary.signal.eyesClosedConfidence ?? 0).toFixed(2)}.`,
     );
-    objectiveParts.push(
-      `Compressions=${liveSummary.signal.compressionRateBpm} BPM (${liveSummary.signal.compressionRhythmQuality}), placement=${liveSummary.signal.handPlacementStatus} (${liveSummary.signal.placementConfidence.toFixed(2)}).`,
+    objectiveSentences.push(
+      `Compression telemetry is ${liveSummary.signal.compressionRateBpm} BPM with rhythm quality ${liveSummary.signal.compressionRhythmQuality}; hand placement status is ${liveSummary.signal.handPlacementStatus} at confidence ${liveSummary.signal.placementConfidence.toFixed(2)}.`,
     );
-    if (liveSummary.victimSnapshot?.capturedAtIso) {
-      objectiveParts.push(`Victim snapshot captured=${liveSummary.victimSnapshot.capturedAtIso}.`);
-    } else if (liveSummary.victimSnapshot?.frameTimestampMs) {
-      objectiveParts.push(`Victim snapshot frame=${liveSummary.victimSnapshot.frameTimestampMs}.`);
-    }
   } else {
-    objectiveParts.push("No live CV summary attached.");
+    objectiveSentences.push("No live computer-vision summary is attached to this case.");
+  }
+  if (resolvedSnapshot?.capturedAtIso) {
+    objectiveSentences.push(`A victim snapshot is attached and was captured at ${resolvedSnapshot.capturedAtIso}.`);
+  } else if (resolvedSnapshot?.frameTimestampMs) {
+    objectiveSentences.push(`A victim snapshot is attached from frame timestamp ${resolvedSnapshot.frameTimestampMs}.`);
+  } else {
+    objectiveSentences.push("No victim snapshot is currently attached.");
+  }
+  if (resolvedSnapshot?.triggerReason) {
+    objectiveSentences.push(`Snapshot trigger context: ${resolvedSnapshot.triggerReason}.`);
+  }
+  if (resolvedSnapshot?.imageDataUrl) {
+    objectiveSentences.push("Snapshot image data is available on the dashboard case record.");
   }
   if (location) {
-    objectiveParts.push(
-      `Location=${location.label} (${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}).`,
+    objectiveSentences.push(
+      `Scene location is ${location.label} at coordinates ${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}.`,
     );
+    if (location.indoorDescriptor?.trim()) {
+      objectiveSentences.push(`Indoor descriptor: ${location.indoorDescriptor.trim()}.`);
+    }
   } else {
-    objectiveParts.push("Location unavailable.");
+    objectiveSentences.push("Scene location is currently unavailable.");
   }
-  const objective = objectiveParts.join(" ");
+  const objective = objectiveSentences.join(" ");
+
+  const assessmentRationaleParts: string[] = [];
+  if (questionnaire.responsiveness === "unresponsive") {
+    assessmentRationaleParts.push("unresponsiveness");
+  }
+  if (questionnaire.breathing === "abnormal_or_absent") {
+    assessmentRationaleParts.push("abnormal/absent breathing");
+  }
+  if (questionnaire.pulse === "absent") {
+    assessmentRationaleParts.push("absent pulse");
+  }
+  if (questionnaire.severeBleeding) {
+    assessmentRationaleParts.push("severe bleeding concern");
+  }
+  if (questionnaire.majorTrauma) {
+    assessmentRationaleParts.push("major trauma concern");
+  }
+  if (liveSummary?.personDownSignal.status === "person_down") {
+    assessmentRationaleParts.push("high-risk person-down visual context");
+  }
 
   const assessment = likelyCardiacArrest
-    ? "Possible out-of-hospital cardiac arrest."
+    ? "Current findings are concerning for a possible out-of-hospital cardiac arrest and should be treated as critical until professional reassessment."
     : critical
-    ? "Possible critical medical emergency."
-    : "Possible high-acuity medical event.";
+    ? "Current findings are concerning for a possible critical medical emergency requiring urgent professional response."
+    : "Current findings suggest a possible high-acuity medical event that still requires prompt professional evaluation.";
+
+  const assessmentRationale = assessmentRationaleParts.length
+    ? `Rationale includes ${assessmentRationaleParts.join(", ")}.`
+    : "Rationale is limited by incomplete scene data.";
 
   const plan = [
-    "Dispatch EMT response and maintain continuous observation.",
-    "Re-check responsiveness, breathing, and pulse every 1-2 minutes.",
-    likelyCardiacArrest ? "Continue immediate CPR and prepare AED if available." : "",
+    "Activate or continue EMS dispatch and maintain continuous observation of the patient until handoff.",
+    "Repeat checks for responsiveness, breathing, and pulse every 1 to 2 minutes, or sooner if status changes.",
+    likelyCardiacArrest
+      ? "Begin or continue high-quality CPR immediately and prepare AED use if available."
+      : "Continue supportive first-aid actions while monitoring for deterioration.",
+    questionnaire.severeBleeding
+      ? "Apply direct pressure and hemorrhage control measures while awaiting responders."
+      : "",
+    questionnaire.majorTrauma
+      ? "Limit patient movement and follow trauma precautions until EMS arrival."
+      : "",
+    "Provide this report, timeline, and any updates directly to arriving EMS or hospital dispatch personnel.",
   ]
     .filter(Boolean)
     .join(" ");
@@ -238,11 +314,19 @@ const buildSoapReportFromContext = (
   const combinedText = [
     "SOAP REPORT (assistive draft)",
     `Generated: ${nowIso}`,
-    `S: ${subjective}`,
-    `O: ${objective}`,
-    `A: ${assessment} Acuity=${acuity}.`,
-    `P: ${plan}`,
-  ].join("\n");
+    "",
+    "Subjective:",
+    subjective,
+    "",
+    "Objective:",
+    objective,
+    "",
+    "Assessment:",
+    `${assessment} ${assessmentRationale} Acuity is ${acuity}.`,
+    "",
+    "Plan:",
+    plan,
+  ].join("\n\n");
 
   return {
     generatedAtIso: nowIso,
@@ -468,8 +552,9 @@ export const buildApp = (options: BuildAppOptions = {}) => {
     const shouldGenerateSoap = payload.generateSoapReport === true;
     const liveSummary = existing.liveSummary ?? undefined;
     const location = existing.location ?? liveSummary?.location;
+    const victimSnapshot = existing.victimSnapshot ?? liveSummary?.victimSnapshot;
     const soapReport = shouldGenerateSoap
-      ? buildSoapReportFromContext(payload.questionnaire, liveSummary, location)
+      ? buildSoapReportFromContext(payload.questionnaire, liveSummary, location, victimSnapshot)
       : undefined;
     const updated = sessionStore.submitQuestionnaire(req.params.sessionId, payload, soapReport);
 
@@ -498,7 +583,8 @@ export const buildApp = (options: BuildAppOptions = {}) => {
 
     const liveSummary = existing.liveSummary ?? undefined;
     const location = existing.location ?? liveSummary?.location;
-    const soapReport = buildSoapReportFromContext(questionnaire, liveSummary, location);
+    const victimSnapshot = existing.victimSnapshot ?? liveSummary?.victimSnapshot;
+    const soapReport = buildSoapReportFromContext(questionnaire, liveSummary, location, victimSnapshot);
     const updated = sessionStore.setSoapReport(req.params.sessionId, soapReport);
     if (!updated) {
       res.status(404).json({ error: "Session not found." });

@@ -5,7 +5,6 @@ import type {
   DispatchPriority,
   DispatchRequest,
   DispatchRequestStatus,
-  EmergencyQuestionnaire,
   PersonDownEvent,
   PersonDownSignal,
   UpdateDispatchRequest,
@@ -22,24 +21,22 @@ const sanitizeSignal = (signal: PersonDownSignal): PersonDownSignal => ({
   confidence: clamp(signal.confidence, 0, 1),
 });
 
-const inferPriority = (
-  questionnaire: EmergencyQuestionnaire,
-  signal: PersonDownSignal,
-): DispatchPriority => {
-  const cardiacArrestPattern =
-    questionnaire.responsiveness === "unresponsive" &&
-    questionnaire.breathing === "abnormal_or_absent";
-  const absentPulse = questionnaire.pulse === "absent";
-  const highConfidenceDown = signal.status === "person_down" && signal.confidence >= 0.75;
-
-  if (cardiacArrestPattern || absentPulse || questionnaire.severeBleeding) {
-    return "critical";
+const hasAutoDownDetectedSnapshot = (
+  snapshot: CreateDispatchRequest["victimSnapshot"] | undefined,
+): boolean => {
+  const reason = snapshot?.triggerReason?.toLowerCase() ?? "";
+  if (!reason) {
+    return false;
   }
-  if (highConfidenceDown && questionnaire.breathing !== "normal") {
-    return "critical";
-  }
-  return "high";
+  return (
+    reason.includes("questionnaire_trigger") ||
+    reason.includes("person_down_trigger") ||
+    reason.includes("auto_down")
+  );
 };
+
+const inferPriority = (payload: CreateDispatchRequest): DispatchPriority =>
+  hasAutoDownDetectedSnapshot(payload.victimSnapshot) ? "critical" : "high";
 
 const inferRecommendedPriority = (signal: PersonDownSignal): DispatchPriority =>
   signal.status === "person_down" && signal.confidence >= 0.75 ? "critical" : "high";
@@ -105,7 +102,7 @@ export class InMemoryDispatchStore {
       createdAtIso: nowIso,
       updatedAtIso: nowIso,
       status: "pending_review",
-      priority: inferPriority(payload.questionnaire, signal),
+      priority: inferPriority(payload),
       location: { ...payload.location },
       questionnaire: {
         ...payload.questionnaire,

@@ -188,6 +188,23 @@ class TestHitlFlow(unittest.TestCase):
         self.assertTrue(any("REQUEST SENT TO DASHBOARD" in line for line in overlay))
         self.assertTrue(any("req-123" in line for line in overlay))
 
+    def test_reset_clears_snapshot_and_submission_checklist_state(self) -> None:
+        session = HitlQuestionnaireSession(cooldown_ms=0)
+        session.pending_victim_snapshot = {"imageDataUrl": "data:image/jpeg;base64,ZmFrZQ=="}
+        session.mark_submitted(
+            "Dashboard request queued (req-123).",
+            timestamp_ms=200,
+            submitted=True,
+            request_id="req-123",
+        )
+        self.assertEqual(session.phase_label(), "REQUEST_SENT_TO_DASHBOARD")
+
+        session.reset()
+        self.assertIsNone(session.pending_victim_snapshot)
+        self.assertIsNone(session.last_submission_success)
+        self.assertIsNone(session.last_submission_request_id)
+        self.assertEqual(session.phase_label(), "WAITING_FOR_PERSON_DOWN")
+
 
 if __name__ == "__main__":
     unittest.main()

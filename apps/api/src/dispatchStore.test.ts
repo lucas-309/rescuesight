@@ -41,7 +41,7 @@ test("InMemoryDispatchStore creates and dispatches request", () => {
       imageDataUrl: "data:image/jpeg;base64,ZmFrZQ==",
       capturedAtIso: "2026-03-07T00:00:00Z",
       frameTimestampMs: 1731000000,
-      triggerReason: "lying>0.60 && eyesClosed>0.80",
+      triggerReason: "questionnaire_trigger (lying=0.72, eyes=0.88)",
     },
     questionnaire: {
       responsiveness: "unresponsive",
@@ -55,7 +55,10 @@ test("InMemoryDispatchStore creates and dispatches request", () => {
   assert.equal(request.priority, "critical");
   assert.equal(request.status, "pending_review");
   assert.equal(request.victimSnapshot?.imageDataUrl, "data:image/jpeg;base64,ZmFrZQ==");
-  assert.equal(request.victimSnapshot?.triggerReason, "lying>0.60 && eyesClosed>0.80");
+  assert.equal(
+    request.victimSnapshot?.triggerReason,
+    "questionnaire_trigger (lying=0.72, eyes=0.88)",
+  );
 
   const updated = store.updateDispatchRequest(request.id, {
     assignment: {
@@ -99,6 +102,38 @@ test("InMemoryDispatchStore supports explicit rejected status", () => {
     dispatchNotes: "Rejected after dispatcher review.",
   });
 
+  assert.equal(request.priority, "high");
   assert.equal(rejected?.status, "rejected");
   assert.equal(rejected?.dispatchNotes, "Rejected after dispatcher review.");
+});
+
+test("InMemoryDispatchStore marks manual snapshot requests as high priority", () => {
+  const store = new InMemoryDispatchStore();
+  const request = store.createDispatchRequest({
+    location: {
+      label: "South hallway",
+      latitude: 40.0,
+      longitude: -73.0,
+    },
+    personDownSignal: {
+      status: "person_down",
+      confidence: 0.95,
+      source: "cv",
+    },
+    victimSnapshot: {
+      imageDataUrl: "data:image/jpeg;base64,ZmFrZQ==",
+      capturedAtIso: "2026-03-07T00:00:00Z",
+      frameTimestampMs: 1731000000,
+      triggerReason: "manual_capture_key_p (status=possible, confidence=0.54)",
+    },
+    questionnaire: {
+      responsiveness: "unresponsive",
+      breathing: "abnormal_or_absent",
+      pulse: "absent",
+      severeBleeding: true,
+      majorTrauma: true,
+    },
+  });
+
+  assert.equal(request.priority, "high");
 });
