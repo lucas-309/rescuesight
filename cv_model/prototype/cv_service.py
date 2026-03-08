@@ -48,7 +48,8 @@ FRAME_REQUEST_PAYLOAD_SHAPE: dict[str, object] = {
     "previewHeight": "integer (optional)",
 }
 DATA_URL_PATTERN = re.compile(r"^data:image/(?:jpeg|jpg|png);base64,([A-Za-z0-9+/=]+)$")
-MAX_INFERENCE_DIM = 640
+MAX_INFERENCE_DIM = 512
+FACE_INFERENCE_STRIDE = 6
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,11 +96,16 @@ class FrameAnalyzer:
         ) = create_landmarkers(model_dir)
         self._bpm_estimator = BpmEstimator()
         self._target_stabilizer = CprTargetStabilizer(
-            max_fallback_frames=4,
-            stable_frames_required=4,
-            recenter_frames_required=4,
-            recenter_distance=0.075,
-            jitter_tolerance=0.06,
+            max_fallback_frames=2,
+            lock_conf_threshold=0.50,
+            unlock_conf_threshold=0.32,
+            stable_frames_required=3,
+            jitter_tolerance=0.075,
+            min_conf_for_tracking=0.30,
+            recenter_frames_required=2,
+            recenter_distance=0.055,
+            tracking_alpha=0.28,
+            max_tracking_boost=0.40,
         )
         self._eyes_conf_smoother = TemporalConfidenceSmoother(rise_alpha=0.54, fall_alpha=0.20)
         self._lying_conf_smoother = TemporalConfidenceSmoother(rise_alpha=0.46, fall_alpha=0.16)
@@ -127,7 +133,7 @@ class FrameAnalyzer:
             pose_result = self._pose_landmarker.detect_for_video(mp_image, timestamp_ms)
             hands_result = self._hand_landmarker.detect_for_video(mp_image, timestamp_ms)
             face_result = None
-            if self._frame_counter % 3 == 1:
+            if self._frame_counter % FACE_INFERENCE_STRIDE == 1:
                 face_result = self._face_landmarker.detect_for_video(mp_image, timestamp_ms)
 
             pose_landmarks = pose_result.pose_landmarks[0] if pose_result.pose_landmarks else None
