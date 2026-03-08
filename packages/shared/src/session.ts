@@ -25,6 +25,7 @@ export type EmergencySessionEventType =
   | "questionnaire_started"
   | "questionnaire_submitted"
   | "soap_generated"
+  | "soap_edited"
   | "dispatch_requested";
 
 export interface EmergencySoapReport {
@@ -80,6 +81,11 @@ export interface SubmitSessionQuestionnaireRequest {
   questionnaire: EmergencyQuestionnaire;
   startedAtIso?: string;
   submittedAtIso?: string;
+}
+
+export interface UpdateSessionSoapReportRequest {
+  combinedText: string;
+  editor?: string;
 }
 
 export interface CreateSessionDispatchRequest {

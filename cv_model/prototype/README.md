@@ -67,17 +67,19 @@ Run everything needed for API + CV + webcam demo:
 ./bootstrap.sh --run-tests --all -- --print-json --camera-index 0
 ```
 
-Run webcam and stream live CV summary into the API (used by web dashboard):
+Run webcam and upload on-demand CV snapshots into the API (used by web dashboard):
 
 ```bash
 ./bootstrap.sh --webcam-only -- \
   --disable-hitl \
   --post-url http://127.0.0.1:8080/api/cv/live-signal \
-  --source-device-id quest3-kiosk-01 \
+  --source-device-id "RescueSight main" \
   --location-label "Main lobby" \
   --location-lat 37.8715 \
   --location-lon -122.2730
 ```
+
+In the webcam window, press `p` to capture/upload a still image.
 
 Webcam-native voice guidance is optional and disabled by default.
 To enable it, set Gemini key first and pass `--enable-voice-agent`:
@@ -105,7 +107,7 @@ Equivalent env-style bootstrap:
 
 ```bash
 LIVE_POST_URL="http://127.0.0.1:8080/api/cv/live-signal" \
-LIVE_SOURCE_DEVICE_ID="quest3-kiosk-01" \
+LIVE_SOURCE_DEVICE_ID="RescueSight main" \
 LIVE_LOCATION_LABEL="Main lobby" \
 LIVE_LOCATION_LAT="37.8715" \
 LIVE_LOCATION_LON="-122.2730" \
@@ -175,7 +177,7 @@ Optional flags:
 - `--max-fallback-frames 12`
 - `--post-url http://127.0.0.1:8080/api/cv/live-signal`
 - `--post-interval-ms 1000`
-- `--source-device-id quest3-kiosk-01`
+- `--source-device-id "RescueSight main"`
 - `--location-label "Main lobby" --location-lat 37.8715 --location-lon -122.2730`
 - `--api-base-url http://127.0.0.1:8080` (enable `POST /api/dispatch/requests` on questionnaire completion)
 - `--disable-hitl` (recommended for primary web-owned operator flow)
@@ -192,9 +194,10 @@ Optional flags:
 - `--voice-api-base-url` (provider default when omitted)
 - `--voice-gemini-base-url https://generativelanguage.googleapis.com` (used in gemini mode)
 
-Controls (when webcam HITL is enabled):
+Controls:
 
 - `q` quit
+- `p` capture/upload still image to API (`--post-url` required)
 - `h` start questionnaire
 - `y` / `n` answer questionnaire prompts
 - `x` reset questionnaire session
@@ -205,7 +208,7 @@ HITL trigger behavior (webcam-local mode only):
 - When trigger is ready, overlay prompts: "Press H to start questionnaire now."
 - If you press `h` without trigger readiness, overlay asks for confirmation (`y` to proceed, `n` to cancel).
 - On trigger readiness, the webcam captures a victim snapshot and includes it in the dispatch request payload as `victimSnapshot`, so the dashboard can display the scene image.
-- While live streaming (`--post-url`), a recent victim snapshot is also attached to `/api/cv/live-signal` summaries when person-down evidence is present, so the web dashboard can escalate with an image.
+- When `p` is pressed with `--post-url`, the captured victim snapshot is attached to `/api/cv/live-signal` so the web dashboard can escalate with an image.
 
 Recommended project-cohesive mode:
 

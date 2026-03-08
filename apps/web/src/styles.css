@@ -295,6 +295,26 @@ textarea {
   font-family: "SFMono-Regular", "Consolas", "Menlo", monospace;
 }
 
+.soap-editor {
+  margin-top: 8px;
+  min-height: 220px;
+  width: 100%;
+  white-space: pre-wrap;
+  border: 1px solid #d7ebe0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+  color: #173f2d;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  font-family: "SFMono-Regular", "Consolas", "Menlo", monospace;
+}
+
+.soap-editor.compact {
+  min-height: 170px;
+  max-height: 260px;
+}
+
 .soap-pre.compact {
   max-height: 220px;
   overflow: auto;

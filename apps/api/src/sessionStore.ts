@@ -76,6 +76,8 @@ const deriveStatus = (session: EmergencySession): EmergencySessionStatus => {
   return "open";
 };
 
+const sanitizeSoapCombinedText = (value: string): string => value.trim().slice(0, 12_000);
+
 const createEvent = (
   type: EmergencySessionEventType,
   summary: string,
@@ -218,6 +220,43 @@ export class InMemorySessionStore {
         ...(soapReport
           ? [createEvent("soap_generated", "SOAP report generated.", nowIso)]
           : []),
+      ],
+    };
+    next.status = deriveStatus(next);
+
+    this.sessions.set(sessionId, next);
+    return copySession(next);
+  }
+
+  updateSoapReport(sessionId: string, combinedText: string, editor?: string): EmergencySession | null {
+    const existing = this.sessions.get(sessionId);
+    if (!existing) {
+      return null;
+    }
+    if (!existing.soapReport) {
+      return null;
+    }
+
+    const sanitized = sanitizeSoapCombinedText(combinedText);
+    if (!sanitized) {
+      return null;
+    }
+
+    const nowIso = new Date().toISOString();
+    const summary = editor?.trim()
+      ? `SOAP report edited by ${editor.trim()}.`
+      : "SOAP report edited.";
+
+    const next: EmergencySession = {
+      ...existing,
+      updatedAtIso: nowIso,
+      soapReport: {
+        ...existing.soapReport,
+        combinedText: sanitized,
+      },
+      events: [
+        ...existing.events,
+        createEvent("soap_edited", summary, nowIso),
       ],
     };
     next.status = deriveStatus(next);

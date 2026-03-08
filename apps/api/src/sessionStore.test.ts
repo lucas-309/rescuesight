@@ -150,3 +150,30 @@ test("InMemorySessionStore syncs dispatch status to dispatched and resolved", ()
   const syncedResolved = store.syncDispatchRequest(resolved);
   assert.equal(syncedResolved?.status, "resolved");
 });
+
+test("InMemorySessionStore supports editing generated SOAP report", () => {
+  const store = new InMemorySessionStore();
+  const created = store.createSession({ source: "web" });
+  store.submitQuestionnaire(
+    created.id,
+    {
+      questionnaire: {
+        responsiveness: "unresponsive",
+        breathing: "abnormal_or_absent",
+        pulse: "unknown",
+        severeBleeding: false,
+        majorTrauma: false,
+      },
+    },
+    buildSoap(),
+  );
+
+  const updated = store.updateSoapReport(
+    created.id,
+    "SOAP REPORT\nS: Reviewed by dispatcher.\nO: Updated objective findings.",
+    "dispatcher_lee",
+  );
+  assert.ok(updated);
+  assert.match(updated?.soapReport?.combinedText ?? "", /Reviewed by dispatcher/);
+  assert.equal(updated?.events[updated.events.length - 1]?.type, "soap_edited");
+});

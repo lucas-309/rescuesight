@@ -17,6 +17,7 @@ import type {
   TriageEvaluationResponse,
   UpdateDispatchRequest,
   UpdateIncidentRequest,
+  UpdateSessionSoapReportRequest,
   XrCvAssist,
   XrIncidentActionUpdateRequest,
   XrIncidentOverlayResponse,
@@ -44,6 +45,7 @@ import {
   isValidPersistIncidentRequest,
   isValidSessionCvSignalRequest,
   isValidSubmitSessionQuestionnaireRequest,
+  isValidUpdateSessionSoapReportRequest,
   isValidUpdateDispatchRequest,
   isValidUpdateIncidentRequest,
   isValidXrIncidentActionUpdateRequest,
@@ -51,6 +53,7 @@ import {
   persistIncidentPayloadShape,
   sessionCvSignalPayloadShape,
   submitSessionQuestionnairePayloadShape,
+  updateSessionSoapReportPayloadShape,
   triagePayloadShape,
   updateDispatchRequestPayloadShape,
   updateIncidentPayloadShape,
@@ -467,6 +470,43 @@ export const buildApp = (options: BuildAppOptions = {}) => {
 
     if (!updated) {
       res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    res.json({ session: updated, soapReport: updated.soapReport });
+  });
+
+  app.patch("/api/sessions/:sessionId/soap-report", (req: Request, res: Response) => {
+    if (!isValidUpdateSessionSoapReportRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid session SOAP update payload.",
+        expected: updateSessionSoapReportPayloadShape,
+      });
+      return;
+    }
+
+    const existing = sessionStore.getSession(req.params.sessionId);
+    if (!existing) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+    if (!existing.soapReport) {
+      res.status(409).json({
+        error: "SOAP report not generated yet. Submit questionnaire before editing SOAP.",
+      });
+      return;
+    }
+
+    const payload = req.body as UpdateSessionSoapReportRequest;
+    const updated = sessionStore.updateSoapReport(
+      req.params.sessionId,
+      payload.combinedText,
+      payload.editor,
+    );
+    if (!updated) {
+      res.status(409).json({
+        error: "SOAP report update failed.",
+      });
       return;
     }
 

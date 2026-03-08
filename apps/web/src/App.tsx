@@ -263,8 +263,6 @@ export const App = () => {
   const [liveSummary, setLiveSummary] = useState<CvLiveSummary | null>(null);
   const [liveStatus, setLiveStatus] = useState<string | null>(null);
 
-  const [browserLocation, setBrowserLocation] = useState<DispatchLocation | null>(null);
-
   const [queue, setQueue] = useState<EmergencySession[]>([]);
   const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
 
@@ -273,14 +271,24 @@ export const App = () => {
 
   const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
   const [queueStatus, setQueueStatus] = useState<string | null>(null);
+  const [soapReportDraft, setSoapReportDraft] = useState("");
+  const [soapDraftTouched, setSoapDraftTouched] = useState(false);
+  const [soapEditorBySession, setSoapEditorBySession] = useState<Record<string, string>>({});
+  const [soapSaveLoadingBySession, setSoapSaveLoadingBySession] = useState<Record<string, boolean>>({});
 
   const liveSummaryEndpoint = useMemo(() => toApiUrl("/api/cv/live-summary"), []);
   const sessionsEndpoint = useMemo(() => toApiUrl("/api/sessions"), []);
-  const effectiveLocation = liveSummary?.location ?? browserLocation;
-  const soapReportPreview = useMemo(
+  const effectiveLocation = liveSummary?.location ?? null;
+  const generatedSoapReportPreview = useMemo(
     () => buildSoapReportText(questionnaire, liveSummary, effectiveLocation),
     [questionnaire, liveSummary, effectiveLocation],
   );
+
+  useEffect(() => {
+    if (!soapDraftTouched) {
+      setSoapReportDraft(generatedSoapReportPreview);
+    }
+  }, [generatedSoapReportPreview, soapDraftTouched]);
 
   const refreshLiveSummary = async () => {
     try {
@@ -288,7 +296,7 @@ export const App = () => {
       if (response.status === 404) {
         setLiveSummary(null);
         setLiveStatus(
-          "No live CV stream yet. Start run_webcam.py with --post-url http://127.0.0.1:8080/api/cv/live-signal.",
+          "No CV snapshot uploaded yet. Start run_webcam.py and press P in the webcam window to capture/upload.",
         );
         return;
       }
@@ -298,7 +306,7 @@ export const App = () => {
 
       const payload = (await response.json()) as { summary: CvLiveSummary };
       setLiveSummary(payload.summary);
-      setLiveStatus(`Live stream active from ${payload.summary.sourceDeviceId ?? "unknown device"}.`);
+      setLiveStatus(`Latest uploaded snapshot from ${payload.summary.sourceDeviceId ?? "unknown device"}.`);
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unknown request error";
       setLiveSummary(null);
@@ -356,30 +364,6 @@ export const App = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queueFilter]);
 
-  const captureBrowserLocation = () => {
-    if (!navigator.geolocation) {
-      setDispatchStatus("Browser geolocation is unavailable in this environment.");
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const fallbackLocation: DispatchLocation = {
-          label: "Browser geolocation",
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracyMeters: Number(position.coords.accuracy.toFixed(1)),
-        };
-        setBrowserLocation(fallbackLocation);
-        setDispatchStatus("Browser geolocation captured for dispatch fallback.");
-      },
-      (error) => {
-        setDispatchStatus(`Location request failed: ${error.message}`);
-      },
-      { timeout: 8_000 },
-    );
-  };
-
   const submitDispatchRequest = async () => {
     setDispatchLoading(true);
     setDispatchStatus(null);
@@ -389,15 +373,16 @@ export const App = () => {
         throw new Error("No live CV summary available. Stream camera stats first.");
       }
 
-      const location = liveSummary.location ?? browserLocation;
+      const location = liveSummary.location;
       if (!location) {
         throw new Error(
-          "No location is attached to the live stream. Add location args in run_webcam.py or capture browser geolocation.",
+          "No location is attached to the uploaded snapshot. Add location args in run_webcam.py.",
         );
       }
+      const effectiveSoapReport = (soapReportDraft.trim() || generatedSoapReportPreview).slice(0, 12_000);
       const questionnaireWithSoap: CreateDispatchRequest["questionnaire"] = {
         ...questionnaire,
-        notes: mergeQuestionnaireNotesWithSoap(questionnaire.notes, soapReportPreview),
+        notes: mergeQuestionnaireNotesWithSoap(questionnaire.notes, effectiveSoapReport),
       };
 
       const createSessionPayload: CreateEmergencySessionRequest = {
@@ -444,6 +429,17 @@ export const App = () => {
       if (!questionnaireResponse.ok) {
         throw new Error(`Session API returned ${questionnaireResponse.status} on questionnaire`);
       }
+      const soapPatchResponse = await fetch(`${sessionsEndpoint}/${sessionId}/soap-report`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          combinedText: effectiveSoapReport,
+          editor: "web_operator",
+        }),
+      });
+      if (!soapPatchResponse.ok) {
+        throw new Error(`Session API returned ${soapPatchResponse.status} on SOAP edit save`);
+      }
 
       const response = await fetch(`${sessionsEndpoint}/${sessionId}/dispatch-request`, {
         method: "POST",
@@ -479,12 +475,50 @@ export const App = () => {
     setQueueStatus(`Dispatch EMT clicked for ${requestId}.`);
   };
 
+  const resetSoapDraftToGenerated = () => {
+    setSoapReportDraft(generatedSoapReportPreview);
+    setSoapDraftTouched(false);
+  };
+
+  const saveSessionSoapReport = async (sessionId: string, combinedText: string) => {
+    const nextText = combinedText.trim();
+    if (!nextText) {
+      setQueueStatus("SOAP report cannot be empty.");
+      return;
+    }
+
+    setSoapSaveLoadingBySession((current) => ({ ...current, [sessionId]: true }));
+    setQueueStatus(null);
+    try {
+      const response = await fetch(`${sessionsEndpoint}/${sessionId}/soap-report`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          combinedText: nextText.slice(0, 12_000),
+          editor: "dashboard_professional",
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Session API returned ${response.status} on SOAP save`);
+      }
+
+      setQueueStatus(`SOAP report updated for session ${sessionId}.`);
+      await refreshQueue(queueFilter);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
+      setQueueStatus(`Unable to save SOAP report: ${message}`);
+    } finally {
+      setSoapSaveLoadingBySession((current) => ({ ...current, [sessionId]: false }));
+    }
+  };
+
   return (
     <main className="app-shell">
       <header className="hero">
         <h1>RescueSight Dispatch Workflow</h1>
         <p>
-          Live camera stats are streamed from the CV pipeline. The UI reads that live summary,
+          Webcam CV runs continuously, and a still frame is uploaded when the operator presses P.
+          The UI reads that latest snapshot summary,
           then a human responder answers a short questionnaire before escalation.
         </p>
         <p className="hero-note">
@@ -494,10 +528,9 @@ export const App = () => {
       </header>
 
       <section className="panel">
-        <h2>1) Live CV Summary</h2>
+        <h2>1) CV Snapshot Summary</h2>
         <p className="helper-text">
-          Start stream from webcam script:
-          <code> python run_webcam.py --post-url http://127.0.0.1:8080/api/cv/live-signal --source-device-id quest3-kiosk-01 --location-label "Main lobby" --location-lat 37.8715 --location-lon -122.2730</code>
+          In the webcam window, press <kbd>p</kbd> to capture and upload a still image.
         </p>
 
         {liveSummary ? (
@@ -545,11 +578,11 @@ export const App = () => {
             <p className="summary-line">{liveSummary.summaryText}</p>
             {liveSummary.victimSnapshot?.imageDataUrl ? (
               <div className="victim-image-block">
-                <p className="meta-line">Latest victim snapshot from live feed</p>
+                <p className="meta-line">Latest uploaded victim snapshot</p>
                 <img
                   className="victim-image"
                   src={liveSummary.victimSnapshot.imageDataUrl}
-                  alt="Latest victim snapshot from live CV stream"
+                  alt="Latest uploaded victim snapshot"
                 />
                 {liveSummary.victimSnapshot.triggerReason ? (
                   <p className="meta-line">Reason: {liveSummary.victimSnapshot.triggerReason}</p>
@@ -564,16 +597,7 @@ export const App = () => {
           <button type="button" className="action-button secondary" onClick={() => void refreshLiveSummary()}>
             Refresh Live Summary
           </button>
-          <button type="button" className="action-button secondary" onClick={captureBrowserLocation}>
-            Capture Browser Location Fallback
-          </button>
         </div>
-
-        {browserLocation ? (
-          <p className="helper-text">
-            Browser fallback: {browserLocation.latitude.toFixed(5)}, {browserLocation.longitude.toFixed(5)}
-          </p>
-        ) : null}
 
         {liveStatus ? <p className="status-message">{liveStatus}</p> : null}
       </section>
@@ -684,8 +708,29 @@ export const App = () => {
           <h3>Auto-Generated SOAP Report</h3>
           <p className="helper-text">
             Combines live CV summary + questionnaire inputs into an EMT handoff-style SOAP draft.
+            You can edit this before escalation so professionals can review and correct details.
           </p>
-          <pre className="soap-pre">{soapReportPreview}</pre>
+          <label className="textarea-label">
+            Editable SOAP draft
+            <textarea
+              className="soap-editor"
+              value={soapReportDraft}
+              onChange={(event) => {
+                setSoapDraftTouched(true);
+                setSoapReportDraft(event.target.value);
+              }}
+            />
+          </label>
+          <div className="actions-row">
+            <button
+              type="button"
+              className="action-button secondary"
+              disabled={dispatchLoading}
+              onClick={resetSoapDraftToGenerated}
+            >
+              Reset To Auto-Draft
+            </button>
+          </div>
         </div>
 
         <div className="actions-row">
@@ -841,7 +886,31 @@ export const App = () => {
                 {session.soapReport?.combinedText ? (
                   <div className="notes-block">
                     <p className="meta-line">SOAP report:</p>
-                    <pre className="soap-pre compact">{session.soapReport.combinedText}</pre>
+                    <textarea
+                      className="soap-editor compact"
+                      value={soapEditorBySession[session.id] ?? session.soapReport.combinedText}
+                      onChange={(event) =>
+                        setSoapEditorBySession((current) => ({
+                          ...current,
+                          [session.id]: event.target.value,
+                        }))
+                      }
+                    />
+                    <div className="actions-row">
+                      <button
+                        type="button"
+                        className="action-button secondary"
+                        disabled={Boolean(soapSaveLoadingBySession[session.id])}
+                        onClick={() =>
+                          void saveSessionSoapReport(
+                            session.id,
+                            soapEditorBySession[session.id] ?? session.soapReport?.combinedText ?? "",
+                          )
+                        }
+                      >
+                        {soapSaveLoadingBySession[session.id] ? "Saving..." : "Save SOAP Edits"}
+                      </button>
+                    </div>
                   </div>
                 ) : questionnaire?.notes ? (
                   <p className="notes">Notes: {questionnaire.notes}</p>

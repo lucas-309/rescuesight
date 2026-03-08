@@ -57,18 +57,20 @@ npm run dev:web
 
 4. Open `http://localhost:5173`.
 
-5. Stream live CV stats to API (for frontend live summary):
+5. Run webcam CV and upload snapshots to API (for frontend summary):
 
 ```bash
 cd cv_model/prototype
 ./bootstrap.sh --webcam-only -- \
   --disable-hitl \
   --post-url http://127.0.0.1:8080/api/cv/live-signal \
-  --source-device-id quest3-kiosk-01 \
+  --source-device-id "RescueSight main" \
   --location-label "Main lobby" \
   --location-lat 37.8715 \
   --location-lon -122.2730
 ```
+
+In the webcam window, press `p` to capture a still image and upload it.
 
 Optional: enable CV-assisted XR checkpoint gating by running the Python CV service and setting:
 
@@ -106,7 +108,7 @@ The primary voice path is the web dashboard ElevenLabs widget.
 ## Implemented Demo Features
 
 - CV person-down intake endpoint (`POST /api/cv/person-down`) with confidence-based questionnaire gating
-- Live CV summary pipeline (`run_webcam.py -> POST /api/cv/live-signal -> GET /api/cv/live-summary`) used by frontend
+- CV snapshot summary pipeline (`run_webcam.py press p -> POST /api/cv/live-signal -> GET /api/cv/live-summary`) used by frontend
 - Web-owned human-in-the-loop questionnaire for pulse/breathing/responsiveness and scene notes
 - Auto-generated SOAP-style EMT handoff draft in web UI, merged into dispatch questionnaire notes
 - Backend emergency escalation flow (`POST /api/dispatch/requests`) that simulates 911-style escalation without calling 911

@@ -258,6 +258,22 @@ describe("RescueSight API routes", () => {
     assert.equal(questionnaireBody.session.events.some((event) => event.type === "soap_generated"), true);
     assert.ok(questionnaireBody.soapReport?.combinedText.includes("SOAP REPORT"));
 
+    const soapPatchResponse = await fetch(`${baseUrl}/api/sessions/${sessionId}/soap-report`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        combinedText: "SOAP REPORT (reviewed)\nS: Dispatcher reviewed and corrected wording.",
+        editor: "dispatcher_qa",
+      }),
+    });
+    assert.equal(soapPatchResponse.status, 200);
+    const soapPatchBody = (await soapPatchResponse.json()) as {
+      soapReport?: { combinedText: string };
+      session: { events: Array<{ type: string }> };
+    };
+    assert.match(soapPatchBody.soapReport?.combinedText ?? "", /SOAP REPORT \(reviewed\)/);
+    assert.equal(soapPatchBody.session.events.some((event) => event.type === "soap_edited"), true);
+
     const dispatchResponse = await fetch(`${baseUrl}/api/sessions/${sessionId}/dispatch-request`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -378,7 +394,7 @@ describe("RescueSight API routes", () => {
           longitude: -122.2578,
           indoorDescriptor: "Ground level",
         },
-        sourceDeviceId: "quest3-kiosk-01",
+        sourceDeviceId: "RescueSight main",
       }),
     });
     assert.equal(cvEventResponse.status, 201);

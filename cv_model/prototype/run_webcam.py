@@ -167,7 +167,7 @@ def parse_args() -> argparse.Namespace:
         "--post-url",
         type=str,
         default="",
-        help="Optional API URL to receive live CV signals (example: http://127.0.0.1:8080/api/cv/live-signal)",
+        help="Optional API URL to receive captured CV snapshots (example: http://127.0.0.1:8080/api/cv/live-signal)",
     )
     parser.add_argument(
         "--post-interval-ms",
@@ -178,7 +178,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--source-device-id",
         type=str,
-        default="cv-webcam-prototype",
+        default="RescueSight main",
         help="Source device identifier included in live signal payload",
     )
     parser.add_argument(
@@ -675,7 +675,7 @@ def build_terminal_metadata_line(
             f"(arm={trigger_arm_streak}, disarm={trigger_disarm_streak})"
         ),
         f"target_lock={'locked' if target_locked else 'tracking'}",
-        f"api_stream={live_post_status}",
+        f"api_snapshot_upload={live_post_status}",
     ]
     if hitl_enabled:
         fields.append(f"hitl_phase={hitl_phase}")
@@ -913,12 +913,12 @@ def post_live_signal(url: str, payload: dict[str, object]) -> tuple[bool, str]:
     try:
         with urllib.request.urlopen(request, timeout=1.5) as response:
             if 200 <= response.status < 300:
-                return True, f"live stream ok ({response.status})"
-            return False, f"live stream status {response.status}"
+                return True, f"snapshot upload ok ({response.status})"
+            return False, f"snapshot upload status {response.status}"
     except urllib.error.HTTPError as exc:
-        return False, f"live stream http {exc.code}"
+        return False, f"snapshot upload http {exc.code}"
     except urllib.error.URLError as exc:
-        return False, f"live stream offline ({exc.reason})"
+        return False, f"snapshot upload offline ({exc.reason})"
 
 
 def configure_camera(cap: cv2.VideoCapture, args: argparse.Namespace) -> None:
@@ -1004,13 +1004,15 @@ def main() -> int:
     lying_conf_smoother = TemporalConfidenceSmoother(rise_alpha=0.46, fall_alpha=0.16)
     last_json_print_ms = 0
     last_terminal_metadata_ms = 0
-    last_live_post_ms = 0
-    live_post_status = "live stream disabled"
+    live_post_status = (
+        "snapshot upload ready (press p)"
+        if live_signal_url
+        else "snapshot upload disabled (set --post-url)"
+    )
     trigger_arm_streak = 0
     trigger_disarm_streak = 0
     trigger_latched = False
-    live_snapshot_cache: Optional[dict[str, object]] = None
-    last_live_snapshot_ms = 0
+    manual_capture_requested = False
 
     model_dir = Path(args.model_dir)
     pose_landmarker, hand_landmarker, face_landmarker = create_landmarkers(model_dir)
@@ -1134,43 +1136,32 @@ def main() -> int:
                 target_locked=stabilized_target.isLocked,
             )
 
-            if (
-                cv_assist.personDownHint.status in {"possible", "likely"}
-                and signal.frameTimestampMs - last_live_snapshot_ms >= 1_200
-            ):
-                live_snapshot_cache = build_victim_snapshot_payload(
-                    frame,
-                    signal.frameTimestampMs,
-                    lying_confidence=lying_confidence,
-                    eyes_closed_confidence=signal.eyesClosedConfidence,
-                    trigger_reason=(
-                        "live_cv_person_down "
-                        f"(status={cv_assist.personDownHint.status}, "
-                        f"confidence={cv_assist.personDownHint.confidence:.2f})"
-                    ),
-                    max_width=720,
-                    jpeg_quality=78,
-                )
-                if live_snapshot_cache is not None:
-                    last_live_snapshot_ms = signal.frameTimestampMs
-
-            if live_signal_url and signal.frameTimestampMs - last_live_post_ms >= max(
-                250, args.post_interval_ms
-            ):
-                payload_snapshot: Optional[dict[str, object]] = None
-                if live_snapshot_cache is not None:
-                    snapshot_ts = live_snapshot_cache.get("frameTimestampMs")
-                    if (
-                        isinstance(snapshot_ts, int)
-                        and signal.frameTimestampMs - snapshot_ts <= 12_000
-                    ):
-                        payload_snapshot = live_snapshot_cache
-                live_payload = build_live_signal_payload(
-                    args, signal, victim_snapshot=payload_snapshot
-                )
-                posted, post_status = post_live_signal(live_signal_url, live_payload)
-                live_post_status = post_status if posted else post_status
-                last_live_post_ms = signal.frameTimestampMs
+            if manual_capture_requested:
+                if not live_signal_url:
+                    live_post_status = "snapshot skipped (set --post-url)"
+                else:
+                    payload_snapshot = build_victim_snapshot_payload(
+                        frame,
+                        signal.frameTimestampMs,
+                        lying_confidence=lying_confidence,
+                        eyes_closed_confidence=signal.eyesClosedConfidence,
+                        trigger_reason=(
+                            "manual_capture_key_p "
+                            f"(status={cv_assist.personDownHint.status}, "
+                            f"confidence={cv_assist.personDownHint.confidence:.2f})"
+                        ),
+                        max_width=720,
+                        jpeg_quality=78,
+                    )
+                    live_payload = build_live_signal_payload(
+                        args, signal, victim_snapshot=payload_snapshot
+                    )
+                    posted, post_status = post_live_signal(live_signal_url, live_payload)
+                    if posted:
+                        live_post_status = f"snapshot uploaded ({signal.frameTimestampMs})"
+                    else:
+                        live_post_status = f"snapshot upload failed ({post_status})"
+                manual_capture_requested = False
 
             if hitl_enabled:
                 victim_snapshot = None
@@ -1282,11 +1273,12 @@ def main() -> int:
                 f"visibility: {signal.visibility}",
                 f"person_down: {person_down_status} ({person_down_confidence:.2f})",
                 f"hitl_trigger: {hitl_trigger_state}",
+                f"snapshot_upload: {live_post_status}",
             ]
             if hitl_enabled:
-                status_lines.append("controls: q quit | h start | x reset")
+                status_lines.append("controls: q quit | p capture/upload | h start | x reset")
             else:
-                status_lines.append("controls: q quit")
+                status_lines.append("controls: q quit | p capture/upload")
             draw_status_panel(frame, status_lines)
 
             if hitl_enabled:
@@ -1329,6 +1321,8 @@ def main() -> int:
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
+            if key == ord("p"):
+                manual_capture_requested = True
             if hitl_enabled:
                 questionnaire.handle_key(key, signal.frameTimestampMs)
     finally:

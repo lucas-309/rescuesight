@@ -10,6 +10,7 @@ import {
   isValidPersistIncidentRequest,
   isValidSessionCvSignalRequest,
   isValidSubmitSessionQuestionnaireRequest,
+  isValidUpdateSessionSoapReportRequest,
   isValidUpdateDispatchRequest,
   isValidUpdateIncidentRequest,
   isValidXrIncidentActionUpdateRequest,
@@ -392,6 +393,22 @@ test("isValidSubmitSessionQuestionnaireRequest requires questionnaire answers", 
   assert.equal(
     isValidSubmitSessionQuestionnaireRequest({
       startedAtIso: "2026-03-08T10:00:00Z",
+    }),
+    false,
+  );
+});
+
+test("isValidUpdateSessionSoapReportRequest validates editable SOAP payload", () => {
+  assert.equal(
+    isValidUpdateSessionSoapReportRequest({
+      combinedText: "SOAP REPORT\nS: Updated by responder.",
+      editor: "dispatcher_jamie",
+    }),
+    true,
+  );
+  assert.equal(
+    isValidUpdateSessionSoapReportRequest({
+      combinedText: "   ",
     }),
     false,
   );

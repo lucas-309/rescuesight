@@ -22,6 +22,7 @@ import type {
   TriageAnswers,
   UpdateDispatchRequest,
   UpdateIncidentRequest,
+  UpdateSessionSoapReportRequest,
   VictimSnapshot,
   XrDeviceContext,
   XrIncidentActionUpdateRequest,
@@ -520,6 +521,24 @@ export const isValidSubmitSessionQuestionnaireRequest = (
   return true;
 };
 
+export const isValidUpdateSessionSoapReportRequest = (
+  value: unknown,
+): value is UpdateSessionSoapReportRequest => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (typeof value.combinedText !== "string" || value.combinedText.trim().length === 0) {
+    return false;
+  }
+
+  if (value.editor !== undefined && typeof value.editor !== "string") {
+    return false;
+  }
+
+  return true;
+};
+
 export const isValidCreateSessionDispatchRequest = (
   value: unknown,
 ): value is CreateSessionDispatchRequest => {
@@ -882,6 +901,11 @@ export const submitSessionQuestionnairePayloadShape = {
   questionnaire: dispatchQuestionnairePayloadShape,
   startedAtIso: "string (optional)",
   submittedAtIso: "string (optional)",
+};
+
+export const updateSessionSoapReportPayloadShape = {
+  combinedText: "string",
+  editor: "string (optional)",
 };
 
 export const createSessionDispatchPayloadShape = {
