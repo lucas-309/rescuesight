@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 from datetime import datetime, timezone
 from math import cos, radians, sin
 from pathlib import Path
@@ -18,6 +19,7 @@ from mediapipe.tasks.python import vision as mp_vision
 
 from cv_hooks import CvHookRequest, evaluate_cv_hook
 from hitl_flow import HitlQuestionnaireSession, build_dispatch_request_payload
+from webcam_voice_agent import VoiceAgentConfig, WebcamVoiceAgent
 from cv_signals import (
     BpmEstimator,
     CprTargetStabilizer,
@@ -88,6 +90,72 @@ def parse_args() -> argparse.Namespace:
         "--disable-hitl",
         action="store_true",
         help="Disable person-down-triggered human-in-the-loop questionnaire",
+    )
+    parser.add_argument(
+        "--enable-voice-agent",
+        action="store_true",
+        help="Enable webcam-native multimodal voice guidance agent (disabled by default)",
+    )
+    parser.add_argument(
+        "--disable-voice-agent",
+        action="store_true",
+        help="Deprecated: webcam voice is disabled by default; keep for backward compatibility",
+    )
+    parser.add_argument(
+        "--voice-provider",
+        type=str,
+        choices=["auto", "gemini", "openai"],
+        default=os.environ.get("RESCUESIGHT_VOICE_PROVIDER", "auto"),
+        help="Voice backend provider (default: auto; prefer Gemini when GEMINI_API_KEY is set)",
+    )
+    parser.add_argument(
+        "--voice-low-latency",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable low-latency Gemini path (single-call audio+vision response)",
+    )
+    parser.add_argument(
+        "--voice-proactive-interval-sec",
+        type=float,
+        default=8.0,
+        help="Seconds between proactive voice observations when no user speech is captured",
+    )
+    parser.add_argument(
+        "--voice-mic-sample-sec",
+        type=float,
+        default=0.9,
+        help="Microphone sample window length for each listen cycle",
+    )
+    parser.add_argument(
+        "--voice-mic-rms-threshold",
+        type=float,
+        default=130.0,
+        help="RMS gate for speech detection before transcription request",
+    )
+    parser.add_argument(
+        "--voice-vision-model",
+        type=str,
+        default=os.environ.get("RESCUESIGHT_VOICE_VISION_MODEL", ""),
+        help="Vision/chat model used by voice provider (provider default when omitted)",
+    )
+    parser.add_argument(
+        "--voice-transcription-model",
+        type=str,
+        default=os.environ.get("RESCUESIGHT_VOICE_TRANSCRIPTION_MODEL", ""),
+        help="Transcription model used by voice provider (provider default when omitted)",
+    )
+    parser.add_argument(
+        "--voice-api-base-url",
+        "--voice-openai-base-url",
+        type=str,
+        default=os.environ.get("RESCUESIGHT_VOICE_API_BASE_URL", ""),
+        help="Optional voice API base URL override (provider default when omitted)",
+    )
+    parser.add_argument(
+        "--voice-gemini-base-url",
+        type=str,
+        default=os.environ.get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
+        help="Gemini API base URL used when provider is gemini",
     )
     parser.add_argument(
         "--questionnaire-cooldown-sec",
@@ -346,12 +414,25 @@ def _placement_instruction(placement_status: str) -> str:
     return mapping.get(placement_status, "Adjust hand to target.")
 
 
+def is_hand_near_cpr_target(
+    hand_center: Optional[Point2D],
+    chest_target: Optional[CprTarget],
+    placement_confidence: float,
+) -> bool:
+    if hand_center is None or chest_target is None or placement_confidence < 0.45:
+        return False
+
+    proximity_radius = max(0.045, min(0.13, chest_target.palmScale * 1.10))
+    return distance(hand_center, chest_target.center) <= proximity_radius
+
+
 def draw_detected_hand_locator(
     frame: np.ndarray,
     hand_center: Point2D,
     chest_target: Optional[CprTarget],
     placement_status: str,
     placement_confidence: float,
+    hand_near_target: bool,
     ready_for_compressions: bool,
 ) -> None:
     frame_h, frame_w = frame.shape[:2]
@@ -369,6 +450,10 @@ def draw_detected_hand_locator(
         fill_color = (30, 215, 105)
         edge_color = (255, 255, 255)
         ring_color = (75, 245, 170)
+    elif hand_near_target:
+        fill_color = (25, 220, 135)
+        edge_color = (255, 255, 255)
+        ring_color = (108, 255, 205)
     elif placement_status == "unknown":
         fill_color = (0, 165, 230)
         edge_color = (255, 255, 255)
@@ -398,11 +483,12 @@ def draw_detected_hand_locator(
     )
     cv2.addWeighted(overlay, 0.60, frame, 0.40, 0.0, frame)
 
-    label = (
-        f"hand confirmed ({placement_confidence:.2f})"
-        if ready_for_compressions
-        else f"hand tracked ({placement_confidence:.2f})"
-    )
+    if ready_for_compressions:
+        label = f"hand confirmed ({placement_confidence:.2f})"
+    elif hand_near_target:
+        label = f"hand near target ({placement_confidence:.2f})"
+    else:
+        label = f"hand tracked ({placement_confidence:.2f})"
     cv2.putText(
         frame,
         label,
@@ -418,7 +504,11 @@ def draw_detected_hand_locator(
         return
 
     target_px = (int(chest_target.center.x * frame_w), int(chest_target.center.y * frame_h))
-    connector_color = (90, 240, 170) if ready_for_compressions else (80, 210, 255)
+    connector_color = (
+        (90, 240, 170)
+        if (ready_for_compressions or hand_near_target)
+        else (80, 210, 255)
+    )
     cv2.line(frame, center_px, target_px, connector_color, 2, cv2.LINE_AA)
 
 
@@ -494,11 +584,11 @@ def draw_status_panel(frame: np.ndarray, lines: list[str]) -> None:
     panel_x = 10
     panel_y = 10
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.82
-    thickness = 2
-    line_gap = 8
-    pad_x = 14
-    pad_y = 10
+    font_scale = 0.62
+    thickness = 1
+    line_gap = 4
+    pad_x = 10
+    pad_y = 8
 
     text_sizes = [cv2.getTextSize(line, font, font_scale, thickness)[0] for line in lines]
     max_width = max((size[0] for size in text_sizes), default=0)
@@ -532,7 +622,7 @@ def draw_status_panel(frame: np.ndarray, lines: list[str]) -> None:
             font,
             font_scale,
             (0, 0, 0),
-            5,
+            3,
             cv2.LINE_AA,
         )
         cv2.putText(
@@ -546,6 +636,54 @@ def draw_status_panel(frame: np.ndarray, lines: list[str]) -> None:
             cv2.LINE_AA,
         )
         text_y += line_height + line_gap
+
+
+def build_terminal_metadata_line(
+    signal: CVSignal,
+    *,
+    ready_for_compressions: bool,
+    hand_near_target: bool,
+    person_down_status: str,
+    person_down_confidence: float,
+    lying_confidence: float,
+    trigger_ready: bool,
+    trigger_arm_streak: int,
+    trigger_disarm_streak: int,
+    target_locked: bool,
+    live_post_status: str,
+    hitl_enabled: bool,
+    hitl_phase: str,
+    voice_lines: list[str],
+) -> str:
+    now_label = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    fields = [
+        f"placement={signal.handPlacementStatus}/{signal.placementConfidence:.2f}",
+        f"compression_ready={'yes' if ready_for_compressions else 'no'}",
+        f"target_proximity={'near' if hand_near_target else 'far'}",
+        f"bpm={signal.compressionRateBpm}",
+        f"rhythm={signal.compressionRhythmQuality}",
+        f"visibility={signal.visibility}",
+        f"person_down={person_down_status}/{person_down_confidence:.2f}",
+        (
+            "posture="
+            f"{signal.bodyPosture}/{signal.postureConfidence:.2f}, "
+            f"eyes={signal.eyesClosedConfidence:.2f}, lying={lying_confidence:.2f}"
+        ),
+        (
+            "hitl_trigger="
+            f"{'ready' if trigger_ready else 'idle'} "
+            f"(arm={trigger_arm_streak}, disarm={trigger_disarm_streak})"
+        ),
+        f"target_lock={'locked' if target_locked else 'tracking'}",
+        f"api_stream={live_post_status}",
+    ]
+    if hitl_enabled:
+        fields.append(f"hitl_phase={hitl_phase}")
+    else:
+        fields.append("hitl=disabled")
+    if voice_lines:
+        fields.append("voice=" + "; ".join(voice_lines))
+    return f"[cv {now_label} UTC] " + " | ".join(fields)
 
 
 def draw_questionnaire_panel(frame: np.ndarray, lines: list[str], active: bool) -> None:
@@ -812,6 +950,47 @@ def main() -> int:
     questionnaire = HitlQuestionnaireSession(
         cooldown_ms=max(0, int(args.questionnaire_cooldown_sec * 1000.0))
     )
+    webcam_voice_enabled = bool(args.enable_voice_agent) and not bool(args.disable_voice_agent)
+    requested_provider = str(args.voice_provider).strip().lower()
+    gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    openai_api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if requested_provider == "gemini":
+        voice_provider = "gemini"
+    elif requested_provider == "openai":
+        voice_provider = "openai"
+    else:
+        voice_provider = "gemini" if gemini_api_key else "openai"
+
+    if voice_provider == "gemini":
+        voice_api_key = gemini_api_key
+        default_voice_base_url = (
+            args.voice_gemini_base_url.strip() or "https://generativelanguage.googleapis.com"
+        )
+        # Use aliases that are broadly available across Gemini API keys.
+        default_vision_model = "gemini-flash-latest"
+        default_transcription_model = "gemini-flash-latest"
+    else:
+        voice_api_key = openai_api_key
+        default_voice_base_url = "https://api.openai.com"
+        default_vision_model = "gpt-4.1-mini"
+        default_transcription_model = "gpt-4o-mini-transcribe"
+
+    voice_agent = WebcamVoiceAgent(
+        VoiceAgentConfig(
+            enabled=webcam_voice_enabled,
+            provider=voice_provider,
+            api_key=voice_api_key,
+            api_base_url=args.voice_api_base_url.strip() or default_voice_base_url,
+            vision_model=args.voice_vision_model.strip() or default_vision_model,
+            transcription_model=(
+                args.voice_transcription_model.strip() or default_transcription_model
+            ),
+            proactive_interval_sec=max(2.0, float(args.voice_proactive_interval_sec)),
+            mic_sample_seconds=max(0.8, float(args.voice_mic_sample_sec)),
+            mic_rms_threshold=max(10.0, float(args.voice_mic_rms_threshold)),
+            low_latency_mode=bool(args.voice_low_latency),
+        )
+    )
 
     cap = cv2.VideoCapture(args.camera_index)
     if not cap.isOpened():
@@ -824,6 +1003,7 @@ def main() -> int:
     eyes_conf_smoother = TemporalConfidenceSmoother(rise_alpha=0.54, fall_alpha=0.20)
     lying_conf_smoother = TemporalConfidenceSmoother(rise_alpha=0.46, fall_alpha=0.16)
     last_json_print_ms = 0
+    last_terminal_metadata_ms = 0
     last_live_post_ms = 0
     live_post_status = "live stream disabled"
     trigger_arm_streak = 0
@@ -834,6 +1014,7 @@ def main() -> int:
 
     model_dir = Path(args.model_dir)
     pose_landmarker, hand_landmarker, face_landmarker = create_landmarkers(model_dir)
+    voice_agent.start()
 
     try:
         while True:
@@ -867,6 +1048,11 @@ def main() -> int:
                 placement_conf,
                 target_scale=chest_target.palmScale if chest_target else None,
             )
+            hand_near_target = is_hand_near_cpr_target(
+                hand_center=hand_center,
+                chest_target=chest_target,
+                placement_confidence=placement_conf,
+            )
 
             bpm, rhythm_quality = bpm_estimator.update(wrist_y, now_ms(), hand_conf)
             visibility = infer_visibility(
@@ -899,6 +1085,15 @@ def main() -> int:
             )
             cv_assist = evaluate_cv_hook(CvHookRequest(signal=signal))
             lying_confidence = signal.postureConfidence if signal.bodyPosture == "lying" else 0.0
+            placement_confirmed = (
+                signal.handPlacementStatus == "correct" and signal.placementConfidence >= 0.68
+            )
+            ready_for_compressions = (
+                chest_target is not None
+                and stabilized_target.isLocked
+                and signal.visibility in {"full", "partial"}
+                and placement_confirmed
+            )
 
             trigger_arm_condition = (
                 lying_confidence >= 0.58
@@ -930,6 +1125,14 @@ def main() -> int:
                 trigger_latched = False
 
             trigger_ready = trigger_latched
+            voice_agent.update_scene(
+                frame,
+                signal,
+                person_down_status=cv_assist.personDownHint.status,
+                person_down_confidence=cv_assist.personDownHint.confidence,
+                ready_for_compressions=ready_for_compressions,
+                target_locked=stabilized_target.isLocked,
+            )
 
             if (
                 cv_assist.personDownHint.status in {"possible", "likely"}
@@ -1045,15 +1248,6 @@ def main() -> int:
                         submitted=False,
                     )
 
-            placement_confirmed = (
-                signal.handPlacementStatus == "correct" and signal.placementConfidence >= 0.68
-            )
-            ready_for_compressions = (
-                chest_target is not None
-                and stabilized_target.isLocked
-                and signal.visibility in {"full", "partial"}
-                and placement_confirmed
-            )
             if chest_target is not None:
                 draw_cpr_hand_target(
                     frame,
@@ -1069,6 +1263,7 @@ def main() -> int:
                     chest_target=chest_target,
                     placement_status=signal.handPlacementStatus,
                     placement_confidence=signal.placementConfidence,
+                    hand_near_target=hand_near_target,
                     ready_for_compressions=ready_for_compressions,
                 )
 
@@ -1080,36 +1275,18 @@ def main() -> int:
                 placement_confidence=signal.placementConfidence,
             )
 
+            person_down_status = cv_assist.personDownHint.status
+            person_down_confidence = cv_assist.personDownHint.confidence
+            hitl_trigger_state = "ready" if trigger_ready else "idle"
             status_lines = [
-                f"placement: {signal.handPlacementStatus} ({signal.placementConfidence:.2f})",
-                f"compression_ready: {'yes' if ready_for_compressions else 'no'}",
-                f"bpm: {signal.compressionRateBpm}",
-                f"rhythm: {signal.compressionRhythmQuality}",
                 f"visibility: {signal.visibility}",
-                (
-                    "person_down_hint: "
-                    f"{cv_assist.personDownHint.status} ({cv_assist.personDownHint.confidence:.2f})"
-                ),
-                (
-                    "posture: "
-                    f"{signal.bodyPosture} ({signal.postureConfidence:.2f}), "
-                    f"eyes_closed: {signal.eyesClosedConfidence:.2f}"
-                ),
-                (
-                    "hitl_trigger: "
-                    f"{'ready' if trigger_ready else 'idle'} "
-                    f"(lying={lying_confidence:.2f}, eyes={signal.eyesClosedConfidence:.2f}, "
-                    f"arm={trigger_arm_streak}, disarm={trigger_disarm_streak})"
-                ),
-                f"target_lock: {'locked' if stabilized_target.isLocked else 'tracking'}",
-                f"api_stream: {live_post_status}",
+                f"person_down: {person_down_status} ({person_down_confidence:.2f})",
+                f"hitl_trigger: {hitl_trigger_state}",
             ]
             if hitl_enabled:
-                status_lines.append(f"hitl_phase: {questionnaire.phase_label()}")
-                status_lines.append("Controls: q=quit h=start x=reset")
+                status_lines.append("controls: q quit | h start | x reset")
             else:
-                status_lines.append("HITL questionnaire disabled (--disable-hitl).")
-                status_lines.append("Controls: q=quit")
+                status_lines.append("controls: q quit")
             draw_status_panel(frame, status_lines)
 
             if hitl_enabled:
@@ -1122,6 +1299,28 @@ def main() -> int:
                     active=questionnaire.active,
                 )
 
+            voice_status_lines = voice_agent.overlay_lines()
+            if signal.frameTimestampMs - last_terminal_metadata_ms >= 1_000:
+                print(
+                    build_terminal_metadata_line(
+                        signal,
+                        ready_for_compressions=ready_for_compressions,
+                        hand_near_target=hand_near_target,
+                        person_down_status=person_down_status,
+                        person_down_confidence=person_down_confidence,
+                        lying_confidence=lying_confidence,
+                        trigger_ready=trigger_ready,
+                        trigger_arm_streak=trigger_arm_streak,
+                        trigger_disarm_streak=trigger_disarm_streak,
+                        target_locked=stabilized_target.isLocked,
+                        live_post_status=live_post_status,
+                        hitl_enabled=hitl_enabled,
+                        hitl_phase=questionnaire.phase_label(),
+                        voice_lines=voice_status_lines,
+                    )
+                )
+                last_terminal_metadata_ms = signal.frameTimestampMs
+
             if args.print_json and signal.frameTimestampMs - last_json_print_ms >= 1_000:
                 print(json.dumps(signal.to_dict()))
                 last_json_print_ms = signal.frameTimestampMs
@@ -1133,6 +1332,7 @@ def main() -> int:
             if hitl_enabled:
                 questionnaire.handle_key(key, signal.frameTimestampMs)
     finally:
+        voice_agent.stop()
         pose_landmarker.close()
         hand_landmarker.close()
         face_landmarker.close()

@@ -14,6 +14,7 @@ This is the Day 1 hackathon scaffold for CV signals using pre-trained MediaPipe 
 - Uses confidence-based lock-on: after stable high-confidence frames, CPR target stays locked to reduce wobble.
 - Uses rescaled person-down confidence so likely person-down states trigger HITL flow more reliably.
 - Streams live signal + victim snapshots into API for web dashboard/operator workflows.
+- Runs a webcam-native multimodal voice coach (auto-start) that combines microphone speech and live frame context.
 - Supports optional webcam-local HITL/debug controls for development runs.
 
 ## Setup
@@ -77,6 +78,27 @@ Run webcam and stream live CV summary into the API (used by web dashboard):
   --location-lat 37.8715 \
   --location-lon -122.2730
 ```
+
+Enable webcam voice guidance (default behavior) by setting Gemini key first:
+
+```bash
+export GEMINI_API_KEY="<your_gemini_api_key>"
+```
+
+Optional fallback provider (OpenAI-compatible):
+
+```bash
+export OPENAI_API_KEY="<your_openai_api_key>"
+```
+
+Provider selection:
+
+- default `auto` mode prefers Gemini when `GEMINI_API_KEY` is present; otherwise OpenAI
+- force provider with `--voice-provider gemini` or `--voice-provider openai`
+
+Microphone capture is provided by `sounddevice`; if unavailable, the voice agent falls back to proactive scene-only guidance and reports mic status in overlay.
+
+Then run bootstrap as usual. The voice agent starts automatically with `run_webcam.py`.
 
 Equivalent env-style bootstrap:
 
@@ -157,6 +179,16 @@ Optional flags:
 - `--api-base-url http://127.0.0.1:8080` (enable `POST /api/dispatch/requests` on questionnaire completion)
 - `--disable-hitl` (recommended for primary web-owned operator flow)
 - `--questionnaire-cooldown-sec 30`
+- `--disable-voice-agent` (turn off webcam-native voice coach)
+- `--voice-provider auto|gemini|openai`
+- `--voice-low-latency / --no-voice-low-latency` (default: enabled; Gemini single-call audio+vision)
+- `--voice-proactive-interval-sec 8`
+- `--voice-mic-sample-sec 0.9` (lower window = faster response)
+- `--voice-mic-rms-threshold 130` (lower gate = easier pickup)
+- `--voice-vision-model` (provider default when omitted)
+- `--voice-transcription-model` (provider default when omitted)
+- `--voice-api-base-url` (provider default when omitted)
+- `--voice-gemini-base-url https://generativelanguage.googleapis.com` (used in gemini mode)
 
 Controls (when webcam HITL is enabled):
 
@@ -181,7 +213,7 @@ Recommended project-cohesive mode:
 ## Quick tests
 
 ```bash
-python -m unittest test_cv_signals.py test_cv_hooks.py test_hitl_flow.py
+python -m unittest test_cv_signals.py test_cv_hooks.py test_hitl_flow.py test_webcam_voice_agent.py
 ```
 
 Or through bootstrap script:

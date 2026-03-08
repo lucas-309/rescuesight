@@ -89,7 +89,7 @@ and launches CV runtime components.
 
 Options:
   --skip-install   Do not run pip install -r requirements.txt
-  --run-tests      Run python -m unittest test_cv_signals.py test_cv_hooks.py test_hitl_flow.py
+  --run-tests      Run python -m unittest test_cv_signals.py test_cv_hooks.py test_hitl_flow.py test_webcam_voice_agent.py
   --all            Run cv_service.py + run_webcam.py (default)
   --service-only   Run only cv_service.py
   --webcam-only    Run only run_webcam.py
@@ -174,7 +174,7 @@ fi
 if [ "${RUN_TESTS}" = true ]; then
   echo "Running CV unit tests"
   cd "${SCRIPT_DIR}"
-  python -m unittest test_cv_signals.py test_cv_hooks.py test_hitl_flow.py
+  python -m unittest test_cv_signals.py test_cv_hooks.py test_hitl_flow.py test_webcam_voice_agent.py
 fi
 
 if [ "${RUN_SERVICE}" = false ] && [ "${RUN_WEBCAM}" = false ]; then

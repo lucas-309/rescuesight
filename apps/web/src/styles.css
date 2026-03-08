@@ -41,30 +41,6 @@ body {
   color: #d8f5e6;
 }
 
-.voice-guide-banner {
-  background: linear-gradient(135deg, #1a4d3a 0%, #2d7d58 100%);
-  color: #fff;
-  border-radius: 14px;
-  padding: 16px 20px;
-  margin-bottom: 18px;
-  border: 2px solid #3d9b6e;
-}
-
-.voice-guide-title {
-  margin: 0 0 8px;
-  font-size: 1.15rem;
-}
-
-.voice-guide-steps {
-  margin: 0;
-  font-size: 1rem;
-  line-height: 1.5;
-}
-
-.voice-guide-steps strong {
-  color: #b8f0d4;
-}
-
 .panel {
   background: #ffffff;
   border-radius: 14px;
@@ -275,6 +251,35 @@ textarea {
   margin: 0 0 6px;
   color: #1c4f37;
   font-size: 1rem;
+}
+
+.voice-widget-card {
+  margin-top: 12px;
+  border: 1px solid #d7ebe0;
+  border-radius: 10px;
+  background: #f8fcf9;
+  padding: 10px 12px;
+}
+
+.voice-widget-meta {
+  margin: 0 0 6px;
+  color: #244d39;
+  font-size: 0.9rem;
+}
+
+.voice-widget-frame {
+  width: 100%;
+  min-height: 440px;
+  border: 1px solid #d7ebe0;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 6px;
+}
+
+.voice-widget-frame elevenlabs-convai {
+  display: block;
+  width: 100%;
+  min-height: 426px;
 }
 
 .soap-pre {

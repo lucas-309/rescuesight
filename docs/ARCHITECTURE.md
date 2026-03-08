@@ -17,7 +17,6 @@ Responsibilities:
 - Generate SOAP-style handoff draft.
 - Submit dispatch escalation requests.
 - Display and operate the pseudo-hospital dispatch dashboard.
-- Host the ElevenLabs voice assistant widget and push live CV context.
 
 Primary integrations:
 - `GET /api/cv/live-summary`
@@ -49,6 +48,7 @@ Responsibilities:
 - Produce hand placement, compression rhythm, posture, and eyes-closed signals.
 - Attach victim snapshots when person-down evidence is present.
 - Stream live signals to API.
+- Run webcam-native multimodal voice coaching (auto-start with webcam runtime).
 
 Mode guidance:
 - Recommended demo mode: worker behavior feeding API for web operator flow.

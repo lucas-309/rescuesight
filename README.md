@@ -11,9 +11,8 @@ This project is intentionally positioned as decision support, not diagnosis.
 - Web app is the primary operator interface for decision steps:
   - live CV summary and victim snapshot
   - questionnaire input
-  - voice assistant interaction
   - dispatch queue actions
-- Python CV worker acts as the sensor process that streams data to API.
+- Python CV worker acts as the sensor process and hosts the webcam voice agent.
 - API is the single source of truth for live summary and dispatch state.
 - Recommended webcam command for this flow uses `--disable-hitl` so questionnaire ownership stays in web.
 
@@ -58,7 +57,13 @@ npm run dev:web
 
 4. Open `http://localhost:5173`.
 
-5. Stream live CV stats to API (for frontend live summary):
+5. Set voice-agent API key (Gemini preferred for webcam-native multimodal voice):
+
+```bash
+export GEMINI_API_KEY="<your_gemini_api_key>"
+```
+
+6. Stream live CV stats to API (for frontend live summary + webcam voice agent):
 
 ```bash
 cd cv_model/prototype
@@ -79,17 +84,34 @@ export RESCUESIGHT_CV_SERVICE_URL="http://127.0.0.1:8091"
 
 Then start API with `npm run dev:api` and submit `cvSignal` with XR triage payloads.
 
-## ElevenLabs Voice Assistant
+## Web Voice Widget (ElevenLabs)
 
-The web app includes an ElevenLabs ConvAI voice widget (bottom-right) that receives live CV signals and gives real-time CPR guidance. **Simple flow: tap "Voice CPR guide" → tap "Start" → the AI speaks first. No need to say hello.**
+The web dashboard includes an embedded ElevenLabs ConvAI widget panel.
 
-**Agent configuration (ElevenLabs dashboard):**
+- Default agent id is `agent_0701kk51qtqvfm1v00ah9c5hvfcx`.
+- Override with:
 
-1. In the [ElevenLabs ConvAI dashboard](https://elevenlabs.io/app/conversational-ai), edit agent `agent_0701kk51qtqvfm1v00ah9c5hvfcx`.
-2. **First message / greeting**: Set the agent to speak first when the conversation starts. Example: *"I'm your CPR guide. I can see your live camera feed. I'll give you step-by-step instructions. Let's start—place your hands in the center of the chest, between the nipples."* This ensures the user gets immediate guidance without having to say anything.
-3. **System prompt**: Add `{{cv_context}}` if your plan supports dynamic variables. The app passes person-down status, hand placement, compression BPM, rhythm quality, visibility, and location so the agent can give targeted instructions (e.g. "move your hands to the center", "compress faster, aim for 100–120 BPM").
-4. **Public access**: Ensure the agent is public with authentication disabled (Advanced tab).
-5. **Allowed domains**: Add `localhost:5173`, `127.0.0.1:5173`, and your network IP (e.g. `10.111.5.4:5173`) in the Security tab.
+```bash
+VITE_ELEVENLABS_AGENT_ID="<your_agent_id>" npm run dev:web
+```
+
+- Disable widget if needed:
+
+```bash
+VITE_ENABLE_ELEVENLABS_WIDGET="false" npm run dev:web
+```
+
+## Webcam Voice Agent
+
+`run_webcam.py` now starts a webcam-native multimodal voice coach by default.
+
+- It consumes live webcam frames + CV metrics continuously.
+- It listens to nearby speech through microphone, transcribes it, and responds with combined speech+vision context.
+- It also produces proactive scene observations on a timer even without user speech.
+- To disable voice at runtime: `--disable-voice-agent`.
+- Provider is selected automatically (`gemini` when `GEMINI_API_KEY` is present, otherwise `openai`).
+- Low-latency mode is enabled by default for Gemini (`--voice-low-latency`), using single-call audio+vision responses.
+- If provider key is missing, CV keeps running and overlay shows voice-agent disabled status.
 
 ## Implemented Demo Features
 
@@ -110,6 +132,7 @@ CV worker highlights:
 - posture/eyes confidence smoothing plus trigger hysteresis to reduce false flicker
 - victim snapshot now flows through live CV summary and dispatch queue so dashboard cards show scene imagery
 - webcam-local questionnaire controls are available for legacy/debug runs, but are not the primary operator path
+- webcam-native multimodal voice coaching auto-starts with `run_webcam.py`
 - mobile app is currently paused from the active runtime stack
 
 ## API Endpoints

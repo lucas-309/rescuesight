@@ -3,7 +3,12 @@ from __future__ import annotations
 import unittest
 
 from cv_signals import CVSignal
-from webcam_voice_agent import build_scene_summary, parse_response_text
+from webcam_voice_agent import (
+    build_scene_summary,
+    data_url_to_inline_part,
+    parse_gemini_text,
+    parse_response_text,
+)
 
 
 def _sample_signal() -> CVSignal:
@@ -59,7 +64,31 @@ class TestWebcamVoiceAgentHelpers(unittest.TestCase):
             "Move hands slightly lower. Continue compressions.",
         )
 
+    def test_parse_gemini_text_reads_candidate_parts(self) -> None:
+        payload = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "Keep compressions deep and steady."},
+                            {"text": "Switch rescuers every 2 minutes if available."},
+                        ]
+                    }
+                }
+            ]
+        }
+        self.assertEqual(
+            parse_gemini_text(payload),
+            "Keep compressions deep and steady. Switch rescuers every 2 minutes if available.",
+        )
+
+    def test_data_url_to_inline_part_extracts_mime_and_data(self) -> None:
+        inline_part = data_url_to_inline_part("data:image/jpeg;base64,abcd1234")
+        self.assertEqual(
+            inline_part,
+            {"inline_data": {"mime_type": "image/jpeg", "data": "abcd1234"}},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

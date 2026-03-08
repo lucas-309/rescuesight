@@ -125,7 +125,7 @@ class TestCvHooks(unittest.TestCase):
         status, body = self._request_json("GET", "/health")
         self.assertEqual(status, 200)
         self.assertEqual(body.get("status"), "ok")
-        self.assertEqual(body.get("service"), "rescuesight-cv-stub")
+        self.assertEqual(body.get("service"), "rescuesight-cv-service")
 
     def test_service_evaluate_endpoint(self) -> None:
         status, body = self._request_json(

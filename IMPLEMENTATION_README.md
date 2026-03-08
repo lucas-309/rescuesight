@@ -223,10 +223,10 @@ Use one coherent operator workflow:
   - live CV summary
   - victim snapshot preview
   - questionnaire
-  - voice assistant
   - dispatch dashboard
 - **Python webcam = CV worker**
   - camera capture + CV inference
+  - webcam-native multimodal voice coaching
   - signal/snapshot streaming to API
   - optional debug overlay mode only for developers
 
@@ -260,7 +260,7 @@ Use one coherent operator workflow:
 - [ ] Manual:
   - run headless webcam worker and verify web shows live summary + image
   - submit escalation in web and verify dispatch queue card includes snapshot
-  - verify voice widget receives updated CV context
+  - verify webcam voice agent gives proactive prompts and speech+vision responses
 
 ### Acceptance Criteria
 
@@ -277,3 +277,21 @@ Use one coherent operator workflow:
   - Mitigation: keep API contract tests around snapshot/location forwarding.
 - Risk: Team members continue using mixed flows.
   - Mitigation: codify defaults in bootstrap scripts and docs.
+
+### 2026-03-08 (Voice Ownership Shift)
+- Added webcam-native multimodal voice module (`webcam_voice_agent.py`) with:
+  - automatic startup from `run_webcam.py`
+  - microphone capture + transcription requests
+  - combined transcript + live frame responses via multimodal model
+  - proactive scene observations when no speech is detected
+  - spoken output via host TTS (`say`) with overlay status lines
+- Extended webcam CLI for voice controls:
+  - `--disable-voice-agent`
+  - `--voice-proactive-interval-sec`
+  - `--voice-mic-sample-sec`
+  - `--voice-mic-rms-threshold`
+  - `--voice-vision-model`
+  - `--voice-transcription-model`
+  - `--voice-openai-base-url`
+- Removed web-side ElevenLabs widget integration from active UI path.
+- Updated bootstrap test command and added helper tests in `test_webcam_voice_agent.py`.

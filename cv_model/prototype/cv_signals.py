@@ -191,22 +191,6 @@ class CprTargetStabilizer:
             )
 
         live_displacement = distance(self._locked_target.center, live_target.center)
-        displacement_ratio = (
-            0.0
-            if self.recenter_distance <= 1e-6
-            else _clamp(live_displacement / self.recenter_distance, 0.0, 1.8)
-        )
-        adaptive_alpha = self.tracking_alpha + self.max_tracking_boost * displacement_ratio
-        conf_scale = _clamp(
-            (live_confidence - self.unlock_conf_threshold) / max(1e-6, 1.0 - self.unlock_conf_threshold),
-            0.2,
-            1.0,
-        )
-        adaptive_alpha = _clamp(adaptive_alpha * conf_scale, 0.08, 0.86)
-
-        # Continuously track the live chest target to avoid sticky overlay lag.
-        self._locked_target = self._blend_target(self._locked_target, live_target, adaptive_alpha)
-
         if live_displacement <= self.recenter_distance * 0.55:
             self._recenter_samples.clear()
             self._locked_confidence = max(self._locked_confidence * 0.90, live_confidence)

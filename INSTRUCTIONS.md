@@ -545,9 +545,8 @@ UI/Workflow consolidation directive (remove redundant operator surfaces):
    - live CV summary
    - victim snapshot preview
    - questionnaire input
-   - voice assistant activation
    - dispatch queue monitoring
-2. Keep Python CV runtime as a sensor/worker process that performs inference and streams data to API.
+2. Keep Python CV runtime as a sensor/worker process that performs inference, streams data to API, and runs webcam-native voice guidance.
 3. Avoid splitting core operator tasks across both OpenCV window and web UI.
 4. Preserve an optional developer-only debug mode in webcam runtime for CV tuning.
 
