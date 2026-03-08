@@ -12,8 +12,8 @@ export const CV_FRAME_POST_URL = rawCvFramePostUrl || `${API_BASE_URL}/api/cv/li
 export const CV_MODEL_FRAME_URL = rawCvModelFrameUrl ? removeTrailingSlash(rawCvModelFrameUrl) : null;
 
 export const CV_POST_INTERVAL_MS =
-  Number.isFinite(rawCvPostIntervalMs) && rawCvPostIntervalMs >= 500
+  Number.isFinite(rawCvPostIntervalMs) && rawCvPostIntervalMs >= 250
     ? rawCvPostIntervalMs
-    : 700;
+    : 500;
 
 export const CV_SOURCE_DEVICE_ID = rawSourceDeviceId || "iphone-rescuesight";

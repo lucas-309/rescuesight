@@ -47,7 +47,7 @@ export const VisualScenePanel = ({ summary }: VisualScenePanelProps) => {
         previewHeight: viewportSize.height > 1 ? viewportSize.height : undefined,
       });
       setStreamError(upload.warning);
-      setModelOverlay(upload.overlay);
+      setModelOverlay((previous) => blendOverlay(previous, upload.overlay));
       setStreamStatus(
         upload.mode === "model"
           ? "Streaming iPhone camera frames through CV model host"
@@ -77,14 +77,28 @@ export const VisualScenePanel = ({ summary }: VisualScenePanelProps) => {
         ? "Camera connected. Starting CV model frame stream..."
         : "Camera connected. Starting fallback frame stream...",
     );
-    void pushCameraFrame();
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    const intervalId = setInterval(() => {
-      void pushCameraFrame();
-    }, CV_POST_INTERVAL_MS);
+    const loop = async () => {
+      if (cancelled) {
+        return;
+      }
+      const startedAt = Date.now();
+      await pushCameraFrame();
+      const elapsedMs = Date.now() - startedAt;
+      const nextDelayMs = Math.max(120, CV_POST_INTERVAL_MS - elapsedMs);
+      timeoutId = setTimeout(() => {
+        void loop();
+      }, nextDelayMs);
+    };
+    void loop();
 
     return () => {
-      clearInterval(intervalId);
+      cancelled = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     };
   }, [permission?.granted, pushCameraFrame]);
 
@@ -359,6 +373,73 @@ const styles = StyleSheet.create({
 });
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+const clampRange = (value: number, lower: number, upper: number): number => Math.max(lower, Math.min(upper, value));
+const lerp = (fromValue: number, toValue: number, alpha: number): number => fromValue + (toValue - fromValue) * alpha;
+const blendAngle = (fromAngleDeg: number, toAngleDeg: number, alpha: number): number => {
+  const delta = ((toAngleDeg - fromAngleDeg + 540) % 360) - 180;
+  return fromAngleDeg + delta * alpha;
+};
+
+const blendPoint = (
+  previous: CvModelOverlay["handCenter"],
+  next: CvModelOverlay["handCenter"],
+  alpha: number,
+): CvModelOverlay["handCenter"] => {
+  if (!next) {
+    return null;
+  }
+  if (!previous) {
+    return next;
+  }
+  return {
+    x: clamp01(lerp(previous.x, next.x, alpha)),
+    y: clamp01(lerp(previous.y, next.y, alpha)),
+  };
+};
+
+const blendOverlay = (previous: CvModelOverlay | null, next: CvModelOverlay | null): CvModelOverlay | null => {
+  if (!next) {
+    return null;
+  }
+  if (!previous) {
+    return next;
+  }
+
+  const handCenter = next.handCenter
+    ? blendPoint(previous.handCenter, next.handCenter, 0.52)
+    : next.visibility === "poor"
+      ? null
+      : previous.handCenter;
+
+  let chestTarget: CvModelOverlay["chestTarget"] = null;
+  if (next.chestTarget) {
+    if (previous.chestTarget) {
+      const dx = next.chestTarget.center.x - previous.chestTarget.center.x;
+      const dy = next.chestTarget.center.y - previous.chestTarget.center.y;
+      const displacement = Math.hypot(dx, dy);
+      const adaptiveAlpha = clampRange(0.26 + displacement * 2.1, 0.24, 0.86);
+      const confidenceScaledAlpha = clampRange(adaptiveAlpha * (0.45 + next.placementConfidence * 0.55), 0.18, 0.88);
+      chestTarget = {
+        center: {
+          x: clamp01(lerp(previous.chestTarget.center.x, next.chestTarget.center.x, confidenceScaledAlpha)),
+          y: clamp01(lerp(previous.chestTarget.center.y, next.chestTarget.center.y, confidenceScaledAlpha)),
+        },
+        angleDeg: blendAngle(previous.chestTarget.angleDeg, next.chestTarget.angleDeg, confidenceScaledAlpha),
+        palmScale: lerp(previous.chestTarget.palmScale, next.chestTarget.palmScale, clampRange(confidenceScaledAlpha, 0.18, 0.72)),
+      };
+    } else {
+      chestTarget = next.chestTarget;
+    }
+  } else if (next.visibility !== "poor") {
+    chestTarget = previous.chestTarget;
+  }
+
+  return {
+    ...next,
+    handCenter,
+    chestTarget,
+  };
+};
 
 const getPlacementColor = (placementStatus: string): string => {
   if (placementStatus === "correct") {
