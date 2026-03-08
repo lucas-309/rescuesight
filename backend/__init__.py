@@ -1,6 +1,8 @@
 from .contracts import (
+    BREATHING_STATUSES,
     EVENT_TYPE_NAMES,
     HAND_POSITION_STATUSES,
+    RESPONSIVENESS_STATUSES,
     RHYTHM_STATUSES,
     STATE_NAMES,
     TOOL_NAMES,
@@ -22,10 +24,12 @@ from .incident_schema import (
 from .session_manager import SessionManager
 
 __all__ = [
+    "BREATHING_STATUSES",
     "EVENT_TYPE_NAMES",
     "HAND_POSITION_STATUSES",
     "INCIDENT_FIELD_NAMES",
     "Incident",
+    "RESPONSIVENESS_STATUSES",
     "RHYTHM_STATUSES",
     "STATE_NAMES",
     "SessionManager",

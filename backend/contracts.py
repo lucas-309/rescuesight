@@ -37,6 +37,8 @@ ToolName = Literal[
 XrSignalType = Literal["hand_position", "compression_rhythm"]
 HandPositionStatus = Literal["correct", "incorrect", "not_detected"]
 RhythmStatus = Literal["slow", "good", "fast"]
+ResponsivenessStatus = Literal["responsive", "unresponsive", "not_sure"]
+BreathingStatus = Literal["normal", "abnormal_or_absent", "not_sure"]
 Speaker = Literal["agent", "user"]
 
 STATE_NAMES: tuple[StateName, ...] = (
@@ -78,6 +80,16 @@ HAND_POSITION_STATUSES: tuple[HandPositionStatus, ...] = (
     "not_detected",
 )
 RHYTHM_STATUSES: tuple[RhythmStatus, ...] = ("slow", "good", "fast")
+RESPONSIVENESS_STATUSES: tuple[ResponsivenessStatus, ...] = (
+    "responsive",
+    "unresponsive",
+    "not_sure",
+)
+BREATHING_STATUSES: tuple[BreathingStatus, ...] = (
+    "normal",
+    "abnormal_or_absent",
+    "not_sure",
+)
 
 
 class TranscriptEntry(TypedDict):
@@ -97,8 +109,8 @@ class Incident(TypedDict):
     start_time: str
     location: str | None
     current_state: StateName
-    responsiveness_status: str | None
-    breathing_status: str | None
+    responsiveness_status: ResponsivenessStatus | None
+    breathing_status: BreathingStatus | None
     cpr_active: bool
     cpr_started_time: str | None
     rhythm_status: RhythmStatus | None

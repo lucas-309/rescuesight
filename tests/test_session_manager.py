@@ -273,6 +273,336 @@ class SessionManagerTests(unittest.TestCase):
                 message="Start compressions.",
             )
 
+    def test_record_user_response_updates_responsiveness_and_logs_both_channels(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        updated = manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="responsiveness",
+            response_value="YES",
+        )
+
+        self.assertEqual(updated["responsiveness_status"], "responsive")
+        self.assertEqual(len(updated["transcript"]), 1)
+        self.assertEqual(updated["transcript"][0]["speaker"], "user")
+        self.assertEqual(updated["transcript"][0]["message"], "YES")
+        self.assertEqual(len(updated["timeline"]), 3)
+        self.assertEqual(updated["timeline"][1]["event_type"], "USER_RESPONSE_RECORDED")
+        self.assertEqual(updated["timeline"][1]["data"]["field"], "responsiveness_status")
+        self.assertEqual(updated["timeline"][1]["data"]["value"], "responsive")
+        self.assertIsNone(updated["timeline"][1]["data"]["previous_value"])
+        self.assertEqual(updated["timeline"][2]["event_type"], "STATE_CHANGED")
+        self.assertEqual(updated["timeline"][2]["data"]["new_state"], "WAIT_FOR_EMS")
+        self.assertEqual(updated["current_state"], "WAIT_FOR_EMS")
+
+    def test_record_user_response_normalizes_breathing_value_and_message_override(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        updated = manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing_status",
+            response_value="gasping",
+            user_message="They are gasping.",
+            timestamp="2026-03-07T00:00:11Z",
+        )
+
+        self.assertEqual(updated["breathing_status"], "abnormal_or_absent")
+        self.assertEqual(updated["transcript"][0]["message"], "They are gasping.")
+        self.assertEqual(updated["transcript"][0]["timestamp"], "2026-03-07T00:00:11Z")
+        self.assertEqual(updated["timeline"][1]["timestamp"], "2026-03-07T00:00:11Z")
+
+    def test_record_user_response_tracks_previous_value(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="unknown",
+        )
+
+        updated = manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="normal",
+        )
+        self.assertEqual(updated["timeline"][3]["data"]["previous_value"], "not_sure")
+        self.assertEqual(updated["timeline"][3]["data"]["value"], "normal")
+
+    def test_record_user_response_rejects_unknown_field(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        with self.assertRaises(ValueError):
+            manager.record_user_response(
+                incident_id=incident["incident_id"],
+                response_field="pulse",
+                response_value="present",
+            )
+
+    def test_record_user_response_rejects_unknown_value_for_field(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        with self.assertRaises(ValueError):
+            manager.record_user_response(
+                incident_id=incident["incident_id"],
+                response_field="responsiveness",
+                response_value="present",
+            )
+
+    def test_record_user_response_rejects_non_string_response_value(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        with self.assertRaises(TypeError):
+            manager.record_user_response(
+                incident_id=incident["incident_id"],
+                response_field="breathing",
+                response_value=1,  # type: ignore[arg-type]
+            )
+
+    def test_record_user_response_rejects_invalid_user_message(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        with self.assertRaises(ValueError):
+            manager.record_user_response(
+                incident_id=incident["incident_id"],
+                response_field="breathing",
+                response_value="normal",
+                user_message="   ",
+            )
+
+    def test_record_user_response_rejects_unknown_incident(self) -> None:
+        manager = SessionManager()
+
+        with self.assertRaises(ValueError):
+            manager.record_user_response(
+                incident_id="missing-id",
+                response_field="breathing",
+                response_value="normal",
+            )
+
+    def test_record_user_response_returns_deep_copy(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        updated = manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="normal",
+        )
+        updated["timeline"][1]["data"]["value"] = "tampered"  # type: ignore[index]
+        updated["transcript"][0]["message"] = "tampered"
+
+        stored = manager.get_session(incident["incident_id"])
+        assert stored is not None
+        self.assertEqual(stored["timeline"][1]["data"]["value"], "normal")
+        self.assertEqual(stored["transcript"][0]["message"], "normal")
+
+    def test_advance_protocol_state_moves_from_session_start(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        updated = manager.advance_protocol_state(
+            incident_id=incident["incident_id"],
+            timestamp="2026-03-07T00:00:01Z",
+        )
+
+        self.assertEqual(updated["current_state"], "RESPONSIVENESS_CHECK")
+        self.assertEqual(updated["timeline"][1]["event_type"], "STATE_CHANGED")
+        self.assertEqual(updated["timeline"][1]["data"]["previous_state"], "SESSION_START")
+        self.assertEqual(updated["timeline"][1]["data"]["new_state"], "RESPONSIVENESS_CHECK")
+
+    def test_advance_protocol_state_is_idempotent_when_state_does_not_change(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+        first = manager.advance_protocol_state(incident_id=incident["incident_id"])
+        second = manager.advance_protocol_state(incident_id=incident["incident_id"])
+
+        self.assertEqual(first["current_state"], "RESPONSIVENESS_CHECK")
+        self.assertEqual(second["current_state"], "RESPONSIVENESS_CHECK")
+        self.assertEqual(len(first["timeline"]), 2)
+        self.assertEqual(len(second["timeline"]), 2)
+
+    def test_advance_protocol_state_rejects_unknown_incident(self) -> None:
+        manager = SessionManager()
+
+        with self.assertRaises(ValueError):
+            manager.advance_protocol_state(incident_id="missing-id")
+
+    def test_record_user_response_unresponsive_then_abnormal_advances_to_cpr_instructions(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="responsiveness",
+            response_value="unresponsive",
+        )
+
+        updated = manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="abnormal",
+        )
+
+        self.assertEqual(updated["current_state"], "CPR_INSTRUCTIONS")
+        self.assertEqual(updated["breathing_status"], "abnormal_or_absent")
+        self.assertEqual(updated["timeline"][-1]["event_type"], "STATE_CHANGED")
+        self.assertEqual(updated["timeline"][-1]["data"]["new_state"], "CPR_INSTRUCTIONS")
+
+    def test_record_user_response_out_of_order_breathing_keeps_responsiveness_check(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        updated = manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="normal",
+        )
+
+        self.assertEqual(updated["current_state"], "RESPONSIVENESS_CHECK")
+
+    def test_responsive_status_keeps_wait_for_ems_even_if_breathing_updates(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="responsiveness",
+            response_value="responsive",
+        )
+
+        updated = manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="abnormal",
+        )
+
+        self.assertEqual(updated["current_state"], "WAIT_FOR_EMS")
+
+    def test_start_cpr_requires_cpr_instructions_state(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        with self.assertRaises(ValueError):
+            manager.start_cpr(incident_id=incident["incident_id"])
+
+    def test_start_cpr_rejects_unknown_incident(self) -> None:
+        manager = SessionManager()
+
+        with self.assertRaises(ValueError):
+            manager.start_cpr(incident_id="missing-id")
+
+    def test_start_cpr_moves_to_active_and_sets_started_time(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="responsiveness",
+            response_value="unresponsive",
+        )
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="not breathing",
+        )
+
+        updated = manager.start_cpr(
+            incident_id=incident["incident_id"],
+            timestamp="2026-03-07T00:00:20Z",
+        )
+
+        self.assertTrue(updated["cpr_active"])
+        self.assertEqual(updated["cpr_started_time"], "2026-03-07T00:00:20Z")
+        self.assertEqual(updated["current_state"], "CPR_ACTIVE")
+        self.assertEqual(updated["timeline"][-2]["event_type"], "CPR_STARTED")
+        self.assertEqual(updated["timeline"][-1]["event_type"], "STATE_CHANGED")
+        self.assertEqual(updated["timeline"][-1]["data"]["new_state"], "CPR_ACTIVE")
+
+    def test_start_cpr_is_idempotent_when_already_active(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="responsiveness",
+            response_value="unresponsive",
+        )
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="absent",
+        )
+        first = manager.start_cpr(incident_id=incident["incident_id"])
+        second = manager.start_cpr(incident_id=incident["incident_id"])
+
+        self.assertEqual(first["current_state"], "CPR_ACTIVE")
+        self.assertEqual(second["current_state"], "CPR_ACTIVE")
+        self.assertEqual(len(first["timeline"]), len(second["timeline"]))
+
+    def test_stop_cpr_requires_active_cpr(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        with self.assertRaises(ValueError):
+            manager.stop_cpr(incident_id=incident["incident_id"])
+
+    def test_stop_cpr_rejects_unknown_incident(self) -> None:
+        manager = SessionManager()
+
+        with self.assertRaises(ValueError):
+            manager.stop_cpr(incident_id="missing-id")
+
+    def test_stop_cpr_with_breathing_detected_moves_to_reassessment(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="responsiveness",
+            response_value="unresponsive",
+        )
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="abnormal",
+        )
+        manager.start_cpr(incident_id=incident["incident_id"])
+
+        updated = manager.stop_cpr(
+            incident_id=incident["incident_id"],
+            breathing_detected=True,
+            timestamp="2026-03-07T00:00:40Z",
+        )
+
+        self.assertFalse(updated["cpr_active"])
+        self.assertEqual(updated["breathing_status"], "normal")
+        self.assertEqual(updated["current_state"], "REASSESSMENT")
+        self.assertEqual(updated["timeline"][-3]["event_type"], "CPR_STOPPED")
+        self.assertEqual(updated["timeline"][-2]["event_type"], "PATIENT_BREATHING_DETECTED")
+        self.assertEqual(updated["timeline"][-1]["event_type"], "STATE_CHANGED")
+
+    def test_stop_cpr_rejects_non_boolean_breathing_detected(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="responsiveness",
+            response_value="unresponsive",
+        )
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="abnormal",
+        )
+        manager.start_cpr(incident_id=incident["incident_id"])
+
+        with self.assertRaises(TypeError):
+            manager.stop_cpr(
+                incident_id=incident["incident_id"],
+                breathing_detected="yes",  # type: ignore[arg-type]
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

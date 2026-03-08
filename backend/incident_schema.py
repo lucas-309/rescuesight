@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Any, Mapping, cast
 
 from .contracts import (
+    BREATHING_STATUSES,
     EVENT_TYPE_NAMES,
     HAND_POSITION_STATUSES,
+    RESPONSIVENESS_STATUSES,
     RHYTHM_STATUSES,
     STATE_NAMES,
     Incident,
@@ -108,12 +110,14 @@ def validate_incident_schema(incident: Mapping[str, Any]) -> Incident:
         raise ValueError(f"current_state must be one of {STATE_NAMES}")
 
     responsiveness_status = incident["responsiveness_status"]
-    if responsiveness_status is not None and not isinstance(responsiveness_status, str):
-        raise TypeError("responsiveness_status must be a string or None")
+    if responsiveness_status is not None and responsiveness_status not in RESPONSIVENESS_STATUSES:
+        raise ValueError(
+            f"responsiveness_status must be one of {RESPONSIVENESS_STATUSES} or None"
+        )
 
     breathing_status = incident["breathing_status"]
-    if breathing_status is not None and not isinstance(breathing_status, str):
-        raise TypeError("breathing_status must be a string or None")
+    if breathing_status is not None and breathing_status not in BREATHING_STATUSES:
+        raise ValueError(f"breathing_status must be one of {BREATHING_STATUSES} or None")
 
     if not isinstance(incident["cpr_active"], bool):
         raise TypeError("cpr_active must be a boolean")

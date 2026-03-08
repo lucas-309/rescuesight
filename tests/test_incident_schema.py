@@ -47,12 +47,36 @@ class IncidentSchemaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_incident_schema(incident)
 
+    def test_validate_incident_schema_rejects_invalid_responsiveness_status(self) -> None:
+        incident = build_incident_schema(
+            incident_id="abc-123",
+            start_time="2026-03-07T00:00:00Z",
+            location=None,
+        )
+        incident["responsiveness_status"] = "unknown"  # type: ignore[assignment]
+
+        with self.assertRaises(ValueError):
+            validate_incident_schema(incident)
+
+    def test_validate_incident_schema_rejects_invalid_breathing_status(self) -> None:
+        incident = build_incident_schema(
+            incident_id="abc-123",
+            start_time="2026-03-07T00:00:00Z",
+            location=None,
+        )
+        incident["breathing_status"] = "labored"  # type: ignore[assignment]
+
+        with self.assertRaises(ValueError):
+            validate_incident_schema(incident)
+
     def test_validate_incident_schema_accepts_valid_payload(self) -> None:
         incident = build_incident_schema(
             incident_id="abc-123",
             start_time="2026-03-07T00:00:00Z",
             location=None,
         )
+        incident["responsiveness_status"] = "not_sure"
+        incident["breathing_status"] = "normal"
         incident["timeline"].append(
             {
                 "event_type": "SESSION_STARTED",
