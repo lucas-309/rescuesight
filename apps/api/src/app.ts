@@ -1,13 +1,19 @@
 import cors from "cors";
 import express, { type Request, type Response } from "express";
 import type {
+  CreateEmergencySessionRequest,
+  CreateSessionDispatchRequest,
   CreateDispatchRequest,
   CvLiveSignalIngestRequest,
   CvLiveSummary,
   CreatePersonDownEventRequest,
   DispatchRequestStatus,
+  EmergencySessionStatus,
+  EmergencySoapReport,
   PersonDownSignal,
   PersistIncidentRequest,
+  SessionCvSignalRequest,
+  SubmitSessionQuestionnaireRequest,
   TriageEvaluationResponse,
   UpdateDispatchRequest,
   UpdateIncidentRequest,
@@ -22,20 +28,29 @@ import type {
 import { createCvEvaluatorFromEnv, type CvEvaluator } from "./cvClient.js";
 import { InMemoryDispatchStore } from "./dispatchStore.js";
 import { InMemoryIncidentStore } from "./incidentStore.js";
+import { InMemorySessionStore } from "./sessionStore.js";
 import {
+  createEmergencySessionPayloadShape,
+  createSessionDispatchPayloadShape,
   createDispatchRequestPayloadShape,
   cvLiveSignalIngestPayloadShape,
   createPersonDownEventPayloadShape,
   isValidAnswers,
   isValidCvLiveSignalIngestRequest,
+  isValidCreateEmergencySessionRequest,
+  isValidCreateSessionDispatchRequest,
   isValidCreateDispatchRequest,
   isValidCreatePersonDownEventRequest,
   isValidPersistIncidentRequest,
+  isValidSessionCvSignalRequest,
+  isValidSubmitSessionQuestionnaireRequest,
   isValidUpdateDispatchRequest,
   isValidUpdateIncidentRequest,
   isValidXrIncidentActionUpdateRequest,
   isValidXrTriageHookRequest,
   persistIncidentPayloadShape,
+  sessionCvSignalPayloadShape,
+  submitSessionQuestionnairePayloadShape,
   triagePayloadShape,
   updateDispatchRequestPayloadShape,
   updateIncidentPayloadShape,
@@ -48,6 +63,7 @@ import { buildXrIncidentOverlayResponse, buildXrOverlaySteps } from "./xrHooks.j
 interface BuildAppOptions {
   incidentStore?: InMemoryIncidentStore;
   dispatchStore?: InMemoryDispatchStore;
+  sessionStore?: InMemorySessionStore;
   cvEvaluator?: CvEvaluator | null;
 }
 
@@ -152,16 +168,112 @@ const buildLiveSummaryText = (
   ].join(" | ");
 };
 
+const buildSoapReportFromContext = (
+  questionnaire: CreateDispatchRequest["questionnaire"],
+  liveSummary: CvLiveSummary | undefined,
+  location: CreateDispatchRequest["location"] | undefined,
+): EmergencySoapReport => {
+  const nowIso = new Date().toISOString();
+  const likelyCardiacArrest =
+    questionnaire.responsiveness === "unresponsive" &&
+    questionnaire.breathing === "abnormal_or_absent";
+  const critical =
+    likelyCardiacArrest ||
+    questionnaire.pulse === "absent" ||
+    questionnaire.severeBleeding ||
+    questionnaire.majorTrauma;
+  const acuity: EmergencySoapReport["acuity"] = critical ? "critical" : "high";
+
+  const subjective = [
+    `Responsiveness=${questionnaire.responsiveness}, breathing=${questionnaire.breathing}, pulse=${questionnaire.pulse}.`,
+    `Severe bleeding=${questionnaire.severeBleeding ? "yes" : "no"}, major trauma=${questionnaire.majorTrauma ? "yes" : "no"}.`,
+    questionnaire.notes?.trim() ? `Notes: ${questionnaire.notes.trim()}` : "Notes: none provided.",
+  ].join(" ");
+
+  const objectiveParts: string[] = [];
+  if (liveSummary) {
+    objectiveParts.push(
+      `CV person-down=${liveSummary.personDownSignal.status} (${liveSummary.personDownSignal.confidence.toFixed(2)}).`,
+    );
+    objectiveParts.push(
+      `Posture=${liveSummary.signal.bodyPosture ?? "unknown"} (${(liveSummary.signal.postureConfidence ?? 0).toFixed(2)}), eyesClosed=${(liveSummary.signal.eyesClosedConfidence ?? 0).toFixed(2)}.`,
+    );
+    objectiveParts.push(
+      `Compressions=${liveSummary.signal.compressionRateBpm} BPM (${liveSummary.signal.compressionRhythmQuality}), placement=${liveSummary.signal.handPlacementStatus} (${liveSummary.signal.placementConfidence.toFixed(2)}).`,
+    );
+    if (liveSummary.victimSnapshot?.capturedAtIso) {
+      objectiveParts.push(`Victim snapshot captured=${liveSummary.victimSnapshot.capturedAtIso}.`);
+    } else if (liveSummary.victimSnapshot?.frameTimestampMs) {
+      objectiveParts.push(`Victim snapshot frame=${liveSummary.victimSnapshot.frameTimestampMs}.`);
+    }
+  } else {
+    objectiveParts.push("No live CV summary attached.");
+  }
+  if (location) {
+    objectiveParts.push(
+      `Location=${location.label} (${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}).`,
+    );
+  } else {
+    objectiveParts.push("Location unavailable.");
+  }
+  const objective = objectiveParts.join(" ");
+
+  const assessment = likelyCardiacArrest
+    ? "Possible out-of-hospital cardiac arrest."
+    : critical
+    ? "Possible critical medical emergency."
+    : "Possible high-acuity medical event.";
+
+  const plan = [
+    "Dispatch EMT response and maintain continuous observation.",
+    "Re-check responsiveness, breathing, and pulse every 1-2 minutes.",
+    likelyCardiacArrest ? "Continue immediate CPR and prepare AED if available." : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const combinedText = [
+    "SOAP REPORT (assistive draft)",
+    `Generated: ${nowIso}`,
+    `S: ${subjective}`,
+    `O: ${objective}`,
+    `A: ${assessment} Acuity=${acuity}.`,
+    `P: ${plan}`,
+  ].join("\n");
+
+  return {
+    generatedAtIso: nowIso,
+    acuity,
+    subjective,
+    objective,
+    assessment,
+    plan,
+    combinedText,
+    safetyNotice:
+      "SOAP report is assistive and combines CV + questionnaire context. It does not replace clinical judgment.",
+  };
+};
+
 export const buildApp = (options: BuildAppOptions = {}) => {
   const app = express();
   const incidentStore = options.incidentStore ?? new InMemoryIncidentStore();
   const dispatchStore = options.dispatchStore ?? new InMemoryDispatchStore();
+  const sessionStore = options.sessionStore ?? new InMemorySessionStore();
   const cvEvaluator = options.cvEvaluator ?? createCvEvaluatorFromEnv();
   const cvAssistByIncident = new Map<string, XrCvAssist>();
   const blockedCheckpointIdsByIncident = new Map<string, string[]>();
   let latestCvLiveSummary: CvLiveSummary | null = null;
   const dispatchStatuses: DispatchRequestStatus[] = [
     "pending_review",
+    "dispatched",
+    "resolved",
+  ];
+  const sessionStatuses: EmergencySessionStatus[] = [
+    "open",
+    "monitoring",
+    "questionnaire_in_progress",
+    "questionnaire_completed",
+    "dispatch_requested",
     "dispatched",
     "resolved",
   ];
@@ -241,6 +353,7 @@ export const buildApp = (options: BuildAppOptions = {}) => {
       docs: {
         health: "/health",
         liveCvSummary: "/api/cv/live-summary",
+        sessions: "/api/sessions",
         triageQuestions: "/api/triage/questions",
       },
     });
@@ -248,6 +361,183 @@ export const buildApp = (options: BuildAppOptions = {}) => {
 
   app.get("/health", (_req: Request, res: Response) => {
     res.json({ status: "ok", service: "rescuesight-api" });
+  });
+
+  app.post("/api/sessions", (req: Request, res: Response) => {
+    if (!isValidCreateEmergencySessionRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid session create payload.",
+        expected: createEmergencySessionPayloadShape,
+      });
+      return;
+    }
+
+    const payload = req.body as CreateEmergencySessionRequest;
+    const session = sessionStore.createSession(payload);
+    res.status(201).json({ session });
+  });
+
+  app.get("/api/sessions", (req: Request, res: Response) => {
+    const status = req.query.status;
+    if (status !== undefined) {
+      if (typeof status !== "string" || !sessionStatuses.includes(status as EmergencySessionStatus)) {
+        res.status(400).json({
+          error: "Invalid session status filter.",
+          expected: sessionStatuses,
+        });
+        return;
+      }
+    }
+
+    const sessions = sessionStore
+      .listSessions()
+      .filter((session) => (status ? session.status === status : true));
+    res.json({ sessions, count: sessions.length });
+  });
+
+  app.get("/api/sessions/:sessionId", (req: Request, res: Response) => {
+    const session = sessionStore.getSession(req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    res.json({ session });
+  });
+
+  app.post("/api/sessions/:sessionId/cv-signal", (req: Request, res: Response) => {
+    if (!isValidSessionCvSignalRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid session CV signal payload.",
+        expected: sessionCvSignalPayloadShape,
+      });
+      return;
+    }
+
+    const existing = sessionStore.getSession(req.params.sessionId);
+    if (!existing) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    const payload = req.body as SessionCvSignalRequest;
+    const personDownSignal = inferPersonDownSignalFromLiveCv(payload.signal);
+    const summary: CvLiveSummary = {
+      updatedAtIso: new Date().toISOString(),
+      signal: payload.signal,
+      personDownSignal,
+      victimSnapshot: payload.victimSnapshot ?? existing.victimSnapshot,
+      summaryText: buildLiveSummaryText(payload.signal, personDownSignal),
+      safetyNotice:
+        "Live CV summary is assistive only and must be confirmed by a human responder.",
+      location: payload.location ?? existing.location,
+      sourceDeviceId: payload.sourceDeviceId ?? existing.sourceDeviceId,
+    };
+
+    latestCvLiveSummary = summary;
+    const updated = sessionStore.recordLiveSummary(req.params.sessionId, summary);
+    if (!updated) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    res.status(202).json({ session: updated, summary });
+  });
+
+  app.post("/api/sessions/:sessionId/questionnaire", (req: Request, res: Response) => {
+    if (!isValidSubmitSessionQuestionnaireRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid session questionnaire payload.",
+        expected: submitSessionQuestionnairePayloadShape,
+      });
+      return;
+    }
+
+    const existing = sessionStore.getSession(req.params.sessionId);
+    if (!existing) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    const payload = req.body as SubmitSessionQuestionnaireRequest;
+    const liveSummary = existing.liveSummary ?? undefined;
+    const location = existing.location ?? liveSummary?.location;
+    const soapReport = buildSoapReportFromContext(payload.questionnaire, liveSummary, location);
+    const updated = sessionStore.submitQuestionnaire(req.params.sessionId, payload, soapReport);
+
+    if (!updated) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    res.json({ session: updated, soapReport: updated.soapReport });
+  });
+
+  app.post("/api/sessions/:sessionId/dispatch-request", (req: Request, res: Response) => {
+    if (!isValidCreateSessionDispatchRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid session dispatch payload.",
+        expected: createSessionDispatchPayloadShape,
+      });
+      return;
+    }
+
+    const existing = sessionStore.getSession(req.params.sessionId);
+    if (!existing) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    const payload = req.body as CreateSessionDispatchRequest;
+    const questionnaire = payload.questionnaire ?? existing.questionnaire.answers;
+    if (!questionnaire) {
+      res.status(409).json({
+        error: "Questionnaire answers are required before dispatch request creation.",
+      });
+      return;
+    }
+
+    const location = payload.location ?? existing.location ?? existing.liveSummary?.location;
+    if (!location) {
+      res.status(409).json({
+        error: "Location is required before dispatch request creation.",
+      });
+      return;
+    }
+
+    const personDownSignal =
+      payload.personDownSignal ?? existing.personDownSignal ?? existing.liveSummary?.personDownSignal;
+    if (!personDownSignal) {
+      res.status(409).json({
+        error: "Person-down signal is required before dispatch request creation.",
+      });
+      return;
+    }
+
+    const request = dispatchStore.createDispatchRequest({
+      questionnaire,
+      location,
+      personDownSignal,
+      victimSnapshot:
+        payload.victimSnapshot ?? existing.victimSnapshot ?? existing.liveSummary?.victimSnapshot,
+      emergencyCallRequested: payload.emergencyCallRequested,
+    });
+
+    const updated = sessionStore.attachDispatchRequest(req.params.sessionId, request);
+    if (!updated) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    res.status(201).json({
+      session: updated,
+      request,
+      backendEscalation: {
+        queued: true,
+        channel: "pseudo_hospital_dashboard",
+        requestId: request.id,
+      },
+    });
   });
 
   app.post("/api/cv/live-signal", (req: Request, res: Response) => {

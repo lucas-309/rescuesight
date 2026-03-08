@@ -1,5 +1,7 @@
 import type {
   AedStatus,
+  CreateEmergencySessionRequest,
+  CreateSessionDispatchRequest,
   CreateDispatchRequest,
   CvLiveSignalIngestRequest,
   CreatePersonDownEventRequest,
@@ -8,12 +10,15 @@ import type {
   CvHandPlacementStatus,
   CvVisibility,
   DispatchRequestStatus,
+  EmergencySessionSource,
   EmergencyQuestionnaire,
   IncidentActionKey,
   IncidentStatus,
   IncidentTimelineInput,
   PersonDownSignal,
   PersistIncidentRequest,
+  SessionCvSignalRequest,
+  SubmitSessionQuestionnaireRequest,
   TriageAnswers,
   UpdateDispatchRequest,
   UpdateIncidentRequest,
@@ -97,6 +102,12 @@ const DISPATCH_STATUS_VALUES: DispatchRequestStatus[] = [
   "pending_review",
   "dispatched",
   "resolved",
+];
+const SESSION_SOURCE_VALUES: EmergencySessionSource[] = [
+  "web",
+  "mobile",
+  "xr",
+  "api",
 ];
 const IMAGE_DATA_URL_PATTERN = /^data:image\/(jpeg|jpg|png);base64,[A-Za-z0-9+/=]+$/;
 
@@ -282,6 +293,9 @@ export const isValidXrCvSignal = (
 const isValidDispatchStatus = (value: unknown): value is DispatchRequestStatus =>
   typeof value === "string" && DISPATCH_STATUS_VALUES.includes(value as DispatchRequestStatus);
 
+const isValidSessionSource = (value: unknown): value is EmergencySessionSource =>
+  typeof value === "string" && SESSION_SOURCE_VALUES.includes(value as EmergencySessionSource);
+
 const isValidPersonDownSignal = (value: unknown): value is PersonDownSignal => {
   if (!isObject(value)) {
     return false;
@@ -452,6 +466,84 @@ export const isValidCvLiveSignalIngestRequest = (
   }
 
   if (value.sourceDeviceId !== undefined && typeof value.sourceDeviceId !== "string") {
+    return false;
+  }
+
+  return true;
+};
+
+export const isValidCreateEmergencySessionRequest = (
+  value: unknown,
+): value is CreateEmergencySessionRequest => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (value.source !== undefined && !isValidSessionSource(value.source)) {
+    return false;
+  }
+
+  if (value.sourceDeviceId !== undefined && typeof value.sourceDeviceId !== "string") {
+    return false;
+  }
+
+  if (value.location !== undefined && !isValidDispatchLocation(value.location)) {
+    return false;
+  }
+
+  return true;
+};
+
+export const isValidSessionCvSignalRequest = (
+  value: unknown,
+): value is SessionCvSignalRequest => isValidCvLiveSignalIngestRequest(value);
+
+export const isValidSubmitSessionQuestionnaireRequest = (
+  value: unknown,
+): value is SubmitSessionQuestionnaireRequest => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (!isValidEmergencyQuestionnaire(value.questionnaire)) {
+    return false;
+  }
+
+  if (value.startedAtIso !== undefined && typeof value.startedAtIso !== "string") {
+    return false;
+  }
+
+  if (value.submittedAtIso !== undefined && typeof value.submittedAtIso !== "string") {
+    return false;
+  }
+
+  return true;
+};
+
+export const isValidCreateSessionDispatchRequest = (
+  value: unknown,
+): value is CreateSessionDispatchRequest => {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (value.questionnaire !== undefined && !isValidEmergencyQuestionnaire(value.questionnaire)) {
+    return false;
+  }
+
+  if (value.location !== undefined && !isValidDispatchLocation(value.location)) {
+    return false;
+  }
+
+  if (value.personDownSignal !== undefined && !isValidPersonDownSignal(value.personDownSignal)) {
+    return false;
+  }
+
+  if (value.victimSnapshot !== undefined && !isValidVictimSnapshot(value.victimSnapshot)) {
+    return false;
+  }
+
+  if (value.emergencyCallRequested !== undefined && !isBoolean(value.emergencyCallRequested)) {
     return false;
   }
 
@@ -771,6 +863,28 @@ export const dispatchVictimSnapshotPayloadShape = {
 };
 
 export const createDispatchRequestPayloadShape = {
+  questionnaire: dispatchQuestionnairePayloadShape,
+  location: dispatchLocationPayloadShape,
+  personDownSignal: personDownSignalPayloadShape,
+  victimSnapshot: dispatchVictimSnapshotPayloadShape,
+  emergencyCallRequested: "boolean (optional)",
+};
+
+export const createEmergencySessionPayloadShape = {
+  source: "web | mobile | xr | api (optional)",
+  sourceDeviceId: "string (optional)",
+  location: dispatchLocationPayloadShape,
+};
+
+export const sessionCvSignalPayloadShape = cvLiveSignalIngestPayloadShape;
+
+export const submitSessionQuestionnairePayloadShape = {
+  questionnaire: dispatchQuestionnairePayloadShape,
+  startedAtIso: "string (optional)",
+  submittedAtIso: "string (optional)",
+};
+
+export const createSessionDispatchPayloadShape = {
   questionnaire: dispatchQuestionnairePayloadShape,
   location: dispatchLocationPayloadShape,
   personDownSignal: personDownSignalPayloadShape,

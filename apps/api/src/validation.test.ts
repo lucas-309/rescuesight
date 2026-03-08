@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isValidCreateEmergencySessionRequest,
+  isValidCreateSessionDispatchRequest,
   isValidCvLiveSignalIngestRequest,
   isValidCreateDispatchRequest,
   isValidCreatePersonDownEventRequest,
   isValidAnswers,
   isValidPersistIncidentRequest,
+  isValidSessionCvSignalRequest,
+  isValidSubmitSessionQuestionnaireRequest,
   isValidUpdateDispatchRequest,
   isValidUpdateIncidentRequest,
   isValidXrIncidentActionUpdateRequest,
@@ -321,6 +325,97 @@ test("isValidUpdateDispatchRequest rejects unknown status", () => {
   assert.equal(
     isValidUpdateDispatchRequest({
       status: "queued",
+    }),
+    false,
+  );
+});
+
+test("isValidCreateEmergencySessionRequest accepts optional session bootstrap fields", () => {
+  assert.equal(
+    isValidCreateEmergencySessionRequest({
+      source: "mobile",
+      sourceDeviceId: "iphone-01",
+      location: {
+        label: "Main lobby",
+        latitude: 37.8715,
+        longitude: -122.273,
+      },
+    }),
+    true,
+  );
+});
+
+test("isValidCreateEmergencySessionRequest rejects unknown source values", () => {
+  assert.equal(
+    isValidCreateEmergencySessionRequest({
+      source: "desktop",
+    }),
+    false,
+  );
+});
+
+test("isValidSessionCvSignalRequest reuses CV live-signal validator", () => {
+  assert.equal(
+    isValidSessionCvSignalRequest({
+      signal: {
+        handPlacementStatus: "correct",
+        placementConfidence: 0.9,
+        compressionRateBpm: 104,
+        compressionRhythmQuality: "good",
+        visibility: "full",
+        frameTimestampMs: 1731009999,
+        bodyPosture: "lying",
+        postureConfidence: 0.8,
+        eyesClosedConfidence: 0.85,
+      },
+      sourceDeviceId: "cam-02",
+    }),
+    true,
+  );
+});
+
+test("isValidSubmitSessionQuestionnaireRequest requires questionnaire answers", () => {
+  assert.equal(
+    isValidSubmitSessionQuestionnaireRequest({
+      questionnaire: {
+        responsiveness: "unresponsive",
+        breathing: "abnormal_or_absent",
+        pulse: "unknown",
+        severeBleeding: false,
+        majorTrauma: false,
+      },
+      startedAtIso: "2026-03-08T10:00:00Z",
+      submittedAtIso: "2026-03-08T10:00:10Z",
+    }),
+    true,
+  );
+  assert.equal(
+    isValidSubmitSessionQuestionnaireRequest({
+      startedAtIso: "2026-03-08T10:00:00Z",
+    }),
+    false,
+  );
+});
+
+test("isValidCreateSessionDispatchRequest accepts partial overrides and rejects bad values", () => {
+  assert.equal(
+    isValidCreateSessionDispatchRequest({
+      emergencyCallRequested: true,
+      personDownSignal: {
+        status: "person_down",
+        confidence: 0.84,
+        source: "cv",
+      },
+      victimSnapshot: {
+        imageDataUrl: "data:image/jpeg;base64,ZmFrZQ==",
+      },
+    }),
+    true,
+  );
+
+  assert.equal(
+    isValidCreateSessionDispatchRequest({
+      emergencyCallRequested: "yes",
     }),
     false,
   );
