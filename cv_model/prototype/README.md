@@ -15,7 +15,7 @@ This is the Day 1 hackathon scaffold for CV signals using pre-trained MediaPipe 
 - Uses rescaled person-down confidence so likely person-down states trigger HITL flow more reliably.
 - Streams live signal + victim snapshots into API for web dashboard/operator workflows.
 - Runs a webcam-native multimodal voice coach (auto-start) that combines microphone speech and live frame context.
-- Supports optional webcam-local HITL/debug controls for development runs.
+- Runs webcam-local checklist flow (snapshot + location + questionnaire) before auto-submission.
 
 ## Setup
 
@@ -67,11 +67,11 @@ Run everything needed for API + CV + webcam demo:
 ./bootstrap.sh --run-tests --all -- --print-json --camera-index 0
 ```
 
-Run webcam and upload on-demand CV snapshots into the API (used by web dashboard):
+Run webcam with checklist + auto-dashboard submission:
 
 ```bash
 ./bootstrap.sh --webcam-only -- \
-  --disable-hitl \
+  --api-base-url http://127.0.0.1:8080 \
   --post-url http://127.0.0.1:8080/api/cv/live-signal \
   --source-device-id "RescueSight main" \
   --location-label "Main lobby" \
@@ -79,7 +79,11 @@ Run webcam and upload on-demand CV snapshots into the API (used by web dashboard
   --location-lon -122.2730
 ```
 
-In the webcam window, press `p` to capture/upload a still image.
+In the webcam window:
+- press `h` to start questionnaire
+- answer with `y` / `n`
+- press `p` for a manual snapshot if needed
+- once checklist (`snapshot + location + questionnaire`) is complete, request auto-sends to dashboard
 
 Webcam-native voice guidance is optional and disabled by default.
 To enable it, set Gemini key first and pass `--enable-voice-agent`:
@@ -113,8 +117,6 @@ LIVE_LOCATION_LAT="37.8715" \
 LIVE_LOCATION_LON="-122.2730" \
 ./bootstrap.sh --webcam-only
 ```
-
-For the consolidated web-owned operator flow, append `-- --disable-hitl` to the command above.
 
 Run service only:
 
@@ -180,7 +182,7 @@ Optional flags:
 - `--source-device-id "RescueSight main"`
 - `--location-label "Main lobby" --location-lat 37.8715 --location-lon -122.2730`
 - `--api-base-url http://127.0.0.1:8080` (enable `POST /api/dispatch/requests` on questionnaire completion)
-- `--disable-hitl` (recommended for primary web-owned operator flow)
+- `--disable-hitl` (debug/legacy mode; disables webcam checklist flow)
 - `--questionnaire-cooldown-sec 30`
 - `--enable-voice-agent` (opt-in webcam-native voice coach)
 - `--disable-voice-agent` (deprecated alias; voice is disabled by default)
@@ -205,15 +207,12 @@ Controls:
 HITL trigger behavior (webcam-local mode only):
 
 - Auto trigger now uses sustained person-down evidence with hysteresis (smoothed posture + eyes + CPR-motion cues), instead of a single strict per-frame threshold.
+- Webcam overlay now includes a checklist for `snapshot`, `location`, and `questionnaire`.
 - When trigger is ready, overlay prompts: "Press H to start questionnaire now."
 - If you press `h` without trigger readiness, overlay asks for confirmation (`y` to proceed, `n` to cancel).
 - On trigger readiness, the webcam captures a victim snapshot and includes it in the dispatch request payload as `victimSnapshot`, so the dashboard can display the scene image.
-- When `p` is pressed with `--post-url`, the captured victim snapshot is attached to `/api/cv/live-signal` so the web dashboard can escalate with an image.
-
-Recommended project-cohesive mode:
-
-- Keep operator actions in web dashboard only.
-- Run webcam with `--disable-hitl` so it behaves as a CV worker/sensor process.
+- If location metadata is missing, checklist blocks submit and overlay explains required `--location-lat/--location-lon`.
+- When `p` is pressed, snapshot is captured for checklist and optionally uploaded to `/api/cv/live-signal` if `--post-url` is configured.
 
 ## Quick tests
 

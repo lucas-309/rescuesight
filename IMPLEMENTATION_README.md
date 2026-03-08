@@ -295,3 +295,43 @@ Use one coherent operator workflow:
   - `--voice-openai-base-url`
 - Removed web-side ElevenLabs widget integration from active UI path.
 - Updated bootstrap test command and added helper tests in `test_webcam_voice_agent.py`.
+
+### 2026-03-08 (Checklist + Dispatcher Ownership Update)
+- Shifted responder intake ownership back to webcam checklist flow:
+  - checklist items now explicitly tracked on webcam overlay:
+    - snapshot
+    - location
+    - questionnaire
+  - responder presses `h` to start questionnaire and answers via `y`/`n`
+  - auto-submit occurs only when all three checklist items are complete
+- Updated webcam questionnaire content to CPR dispatch context:
+  - responsiveness
+  - breathing
+  - pulse
+  - severe bleeding
+  - major trauma
+- Added stronger webcam-side submission safeguards:
+  - manual `p` snapshot now populates checklist snapshot state
+  - auto-capture snapshot at questionnaire completion when needed
+  - location is now required for submit (no placeholder coordinates on dispatch submission)
+  - explicit on-screen dashboard-send confirmation is retained
+- Refactored API workflow to support dispatcher-owned SOAP generation:
+  - questionnaire submission no longer auto-generates SOAP by default
+  - added `POST /api/sessions/:sessionId/soap-report/generate`
+  - compatibility `POST /api/dispatch/requests` path now creates session + questionnaire without implicit SOAP
+- Expanded lifecycle statuses and sync:
+  - added dispatch status `rejected`
+  - added matching session status `rejected`
+- Updated web dashboard for dispatcher actions:
+  - removed redundant controls:
+    - `Refresh Live Summary`
+    - `Reset To Auto-Draft`
+  - removed web-side bystander questionnaire/escalation path
+  - dispatcher queue now supports:
+    - generate SOAP draft
+    - edit/save SOAP
+    - send to hospital dispatch
+    - reject request
+- Updated docs to match new workflow:
+  - `README.md`
+  - `cv_model/prototype/README.md`

@@ -122,7 +122,7 @@ test("InMemorySessionStore creates session and records lifecycle events", () => 
   );
 });
 
-test("InMemorySessionStore syncs dispatch status to dispatched and resolved", () => {
+test("InMemorySessionStore syncs dispatch status to dispatched, rejected, and resolved", () => {
   const store = new InMemorySessionStore();
   const created = store.createSession({ source: "web" });
 
@@ -142,13 +142,43 @@ test("InMemorySessionStore syncs dispatch status to dispatched and resolved", ()
   const syncedDispatched = store.syncDispatchRequest(dispatched);
   assert.equal(syncedDispatched?.status, "dispatched");
 
-  const resolved: DispatchRequest = {
+  const rejected: DispatchRequest = {
     ...dispatched,
+    status: "rejected",
+    updatedAtIso: "2026-03-08T10:09:00.000Z",
+  };
+  const syncedRejected = store.syncDispatchRequest(rejected);
+  assert.equal(syncedRejected?.status, "rejected");
+
+  const resolved: DispatchRequest = {
+    ...rejected,
     status: "resolved",
     updatedAtIso: "2026-03-08T10:12:00.000Z",
   };
   const syncedResolved = store.syncDispatchRequest(resolved);
   assert.equal(syncedResolved?.status, "resolved");
+});
+
+test("InMemorySessionStore can generate SOAP report after questionnaire submission", () => {
+  const store = new InMemorySessionStore();
+  const created = store.createSession({ source: "web" });
+
+  const submitted = store.submitQuestionnaire(created.id, {
+    questionnaire: {
+      responsiveness: "unresponsive",
+      breathing: "abnormal_or_absent",
+      pulse: "unknown",
+      severeBleeding: false,
+      majorTrauma: false,
+    },
+  });
+  assert.ok(submitted);
+  assert.equal(submitted?.soapReport, undefined);
+
+  const generated = store.setSoapReport(created.id, buildSoap());
+  assert.ok(generated);
+  assert.ok(generated?.soapReport?.combinedText.includes("SOAP REPORT"));
+  assert.equal(generated?.events[generated.events.length - 1]?.type, "soap_generated");
 });
 
 test("InMemorySessionStore supports editing generated SOAP report", () => {

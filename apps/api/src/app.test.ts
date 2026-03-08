@@ -255,8 +255,22 @@ describe("RescueSight API routes", () => {
       questionnaireBody.session.events.some((event) => event.type === "questionnaire_submitted"),
       true,
     );
-    assert.equal(questionnaireBody.session.events.some((event) => event.type === "soap_generated"), true);
-    assert.ok(questionnaireBody.soapReport?.combinedText.includes("SOAP REPORT"));
+    assert.equal(questionnaireBody.session.events.some((event) => event.type === "soap_generated"), false);
+    assert.equal(questionnaireBody.soapReport, undefined);
+
+    const soapGenerateResponse = await fetch(`${baseUrl}/api/sessions/${sessionId}/soap-report/generate`, {
+      method: "POST",
+    });
+    assert.equal(soapGenerateResponse.status, 201);
+    const soapGenerateBody = (await soapGenerateResponse.json()) as {
+      soapReport?: { combinedText: string };
+      session: { events: Array<{ type: string }> };
+    };
+    assert.ok(soapGenerateBody.soapReport?.combinedText.includes("SOAP REPORT"));
+    assert.equal(
+      soapGenerateBody.session.events.some((event) => event.type === "soap_generated"),
+      true,
+    );
 
     const soapPatchResponse = await fetch(`${baseUrl}/api/sessions/${sessionId}/soap-report`, {
       method: "PATCH",
@@ -513,6 +527,64 @@ describe("RescueSight API routes", () => {
       `${baseUrl}/api/dispatch/requests/${createdDispatchBody.request.id}`,
     );
     assert.equal(getDispatchResponse.status, 200);
+  });
+
+  test("dispatch rejection updates linked session status", async () => {
+    const createDispatchResponse = await fetch(`${baseUrl}/api/dispatch/requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        questionnaire: {
+          responsiveness: "unknown",
+          breathing: "unknown",
+          pulse: "unknown",
+          severeBleeding: false,
+          majorTrauma: false,
+        },
+        location: {
+          label: "North lot",
+          latitude: 37.872,
+          longitude: -122.272,
+        },
+        personDownSignal: {
+          status: "uncertain",
+          confidence: 0.52,
+          source: "cv",
+        },
+      }),
+    });
+    assert.equal(createDispatchResponse.status, 201);
+    const createDispatchBody = (await createDispatchResponse.json()) as {
+      request: { id: string };
+    };
+
+    const rejectResponse = await fetch(
+      `${baseUrl}/api/dispatch/requests/${createDispatchBody.request.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "rejected",
+          dispatchNotes: "Rejected by dispatcher.",
+        }),
+      },
+    );
+    assert.equal(rejectResponse.status, 200);
+
+    const sessionsResponse = await fetch(`${baseUrl}/api/sessions?status=rejected`);
+    assert.equal(sessionsResponse.status, 200);
+    const sessionsBody = (await sessionsResponse.json()) as {
+      sessions: Array<{ status: string; dispatchRequest?: { id: string; status: string } }>;
+    };
+    assert.equal(
+      sessionsBody.sessions.some(
+        (session) =>
+          session.status === "rejected" &&
+          session.dispatchRequest?.id === createDispatchBody.request.id &&
+          session.dispatchRequest.status === "rejected",
+      ),
+      true,
+    );
   });
 
   test("incident lifecycle: create, list, get, patch, and handoff", async () => {

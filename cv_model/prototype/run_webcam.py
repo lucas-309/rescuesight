@@ -822,26 +822,42 @@ def build_live_signal_payload(
 
 def build_dispatch_location_payload(args: argparse.Namespace) -> dict[str, object]:
     label = args.location_label.strip()
-    if args.location_lat is not None and args.location_lon is not None:
-        location_payload: dict[str, object] = {
-            "label": label or "CV webcam location",
-            "latitude": float(args.location_lat),
-            "longitude": float(args.location_lon),
-        }
-        if args.location_accuracy is not None:
-            location_payload["accuracyMeters"] = float(args.location_accuracy)
-        if args.location_indoor.strip():
-            location_payload["indoorDescriptor"] = args.location_indoor.strip()
-        return location_payload
-
-    return {
-        "label": "CV webcam (location unavailable)",
-        "latitude": 0.0,
-        "longitude": 0.0,
-        "indoorDescriptor": (
-            "Set --location-label/--location-lat/--location-lon for real location in dashboard."
-        ),
+    location_payload: dict[str, object] = {
+        "label": label or "CV webcam location",
+        "latitude": float(args.location_lat),
+        "longitude": float(args.location_lon),
     }
+    if args.location_accuracy is not None:
+        location_payload["accuracyMeters"] = float(args.location_accuracy)
+    if args.location_indoor.strip():
+        location_payload["indoorDescriptor"] = args.location_indoor.strip()
+    return location_payload
+
+
+def has_dispatch_location(args: argparse.Namespace) -> bool:
+    return args.location_lat is not None and args.location_lon is not None
+
+
+def build_hitl_checklist_lines(
+    *,
+    snapshot_ready: bool,
+    location_ready: bool,
+    questionnaire_ready: bool,
+    sent_to_dashboard: bool,
+) -> list[str]:
+    lines = [
+        "=== CPR CHECKLIST ===",
+        f"[{'x' if snapshot_ready else ' '}] Snapshot",
+        f"[{'x' if location_ready else ' '}] Location",
+        f"[{'x' if questionnaire_ready else ' '}] Questionnaire",
+    ]
+    if sent_to_dashboard:
+        lines.append("Checklist complete: request sent to dashboard.")
+    elif snapshot_ready and location_ready and questionnaire_ready:
+        lines.append("Checklist complete. Sending to dashboard...")
+    else:
+        lines.append("Press H for questionnaire. Auto-send after all 3 are done.")
+    return lines
 
 
 def build_person_down_signal_payload(cv_status: str, cv_confidence: float, timestamp_ms: int) -> dict[str, object]:
@@ -921,6 +937,12 @@ def post_live_signal(url: str, payload: dict[str, object]) -> tuple[bool, str]:
         return False, f"snapshot upload offline ({exc.reason})"
 
 
+def normalize_keypress(key: int) -> int:
+    if 65 <= key <= 90:
+        return key + 32
+    return key
+
+
 def configure_camera(cap: cv2.VideoCapture, args: argparse.Namespace) -> None:
     if args.camera_zoom < 0:
         return
@@ -996,6 +1018,10 @@ def main() -> int:
     if not cap.isOpened():
         print("Unable to open webcam. Try a different --camera-index.")
         return 1
+    if hitl_enabled:
+        print("HITL checklist enabled: press H to start questionnaire.")
+    else:
+        print("HITL checklist disabled (--disable-hitl): H questionnaire controls are unavailable.")
     configure_camera(cap, args)
 
     bpm_estimator = BpmEstimator()
@@ -1096,6 +1122,7 @@ def main() -> int:
                 and signal.visibility in {"full", "partial"}
                 and placement_confirmed
             )
+            location_ready = has_dispatch_location(args)
 
             trigger_arm_condition = (
                 lying_confidence >= 0.58
@@ -1137,22 +1164,27 @@ def main() -> int:
             )
 
             if manual_capture_requested:
-                if not live_signal_url:
-                    live_post_status = "snapshot skipped (set --post-url)"
+                payload_snapshot = build_victim_snapshot_payload(
+                    frame,
+                    signal.frameTimestampMs,
+                    lying_confidence=lying_confidence,
+                    eyes_closed_confidence=signal.eyesClosedConfidence,
+                    trigger_reason=(
+                        "manual_capture_key_p "
+                        f"(status={cv_assist.personDownHint.status}, "
+                        f"confidence={cv_assist.personDownHint.confidence:.2f})"
+                    ),
+                    max_width=720,
+                    jpeg_quality=78,
+                )
+                if hitl_enabled and payload_snapshot is not None:
+                    questionnaire.pending_victim_snapshot = payload_snapshot
+
+                if payload_snapshot is None:
+                    live_post_status = "snapshot capture failed"
+                elif not live_signal_url:
+                    live_post_status = "snapshot captured locally (set --post-url to upload)"
                 else:
-                    payload_snapshot = build_victim_snapshot_payload(
-                        frame,
-                        signal.frameTimestampMs,
-                        lying_confidence=lying_confidence,
-                        eyes_closed_confidence=signal.eyesClosedConfidence,
-                        trigger_reason=(
-                            "manual_capture_key_p "
-                            f"(status={cv_assist.personDownHint.status}, "
-                            f"confidence={cv_assist.personDownHint.confidence:.2f})"
-                        ),
-                        max_width=720,
-                        jpeg_quality=78,
-                    )
                     live_payload = build_live_signal_payload(
                         args, signal, victim_snapshot=payload_snapshot
                     )
@@ -1193,7 +1225,36 @@ def main() -> int:
                     print(questionnaire.last_status)
 
             if hitl_enabled and questionnaire.completed_answers is not None:
-                if dispatch_request_url:
+                if questionnaire.pending_victim_snapshot is None:
+                    questionnaire.pending_victim_snapshot = build_victim_snapshot_payload(
+                        frame,
+                        signal.frameTimestampMs,
+                        lying_confidence=lying_confidence,
+                        eyes_closed_confidence=signal.eyesClosedConfidence,
+                        trigger_reason=(
+                            "questionnaire_complete_auto_snapshot "
+                            f"(status={cv_assist.personDownHint.status}, "
+                            f"confidence={cv_assist.personDownHint.confidence:.2f})"
+                        ),
+                        max_width=960,
+                        jpeg_quality=84,
+                    )
+
+                if questionnaire.pending_victim_snapshot is None:
+                    questionnaire.last_status = (
+                        "Checklist incomplete: snapshot missing. Press P to capture snapshot."
+                    )
+                elif not location_ready:
+                    questionnaire.last_status = (
+                        "Checklist incomplete: location missing. Set --location-lat/--location-lon."
+                    )
+                elif not dispatch_request_url:
+                    questionnaire.mark_submitted(
+                        status="Questionnaire complete (not submitted: set --api-base-url).",
+                        timestamp_ms=signal.frameTimestampMs,
+                        submitted=False,
+                    )
+                else:
                     dispatch_payload = build_dispatch_request_payload(
                         questionnaire=questionnaire.completed_answers,
                         location=build_dispatch_location_payload(args),
@@ -1232,12 +1293,6 @@ def main() -> int:
                         submitted=submitted,
                         request_id=request_id,
                     )
-                else:
-                    questionnaire.mark_submitted(
-                        status="Questionnaire complete (not submitted: set --api-base-url).",
-                        timestamp_ms=signal.frameTimestampMs,
-                        submitted=False,
-                    )
 
             if chest_target is not None:
                 draw_cpr_hand_target(
@@ -1273,16 +1328,27 @@ def main() -> int:
                 f"visibility: {signal.visibility}",
                 f"person_down: {person_down_status} ({person_down_confidence:.2f})",
                 f"hitl_trigger: {hitl_trigger_state}",
-                f"snapshot_upload: {live_post_status}",
             ]
             if hitl_enabled:
-                status_lines.append("controls: q quit | p capture/upload | h start | x reset")
+                status_lines.append("controls: Q quit | P capture/upload | H start | X reset")
             else:
-                status_lines.append("controls: q quit | p capture/upload")
+                status_lines.append("controls: Q quit | P capture/upload")
+                status_lines.append("H checklist disabled (--disable-hitl)")
             draw_status_panel(frame, status_lines)
 
             if hitl_enabled:
-                questionnaire_lines = questionnaire.overlay_lines(
+                checklist_snapshot_ready = questionnaire.pending_victim_snapshot is not None
+                checklist_questionnaire_ready = (
+                    questionnaire.completed_answers is not None
+                    or questionnaire.last_submission_success is True
+                )
+                checklist_lines = build_hitl_checklist_lines(
+                    snapshot_ready=checklist_snapshot_ready,
+                    location_ready=location_ready,
+                    questionnaire_ready=checklist_questionnaire_ready,
+                    sent_to_dashboard=questionnaire.last_submission_success is True,
+                )
+                questionnaire_lines = checklist_lines + questionnaire.overlay_lines(
                     api_enabled=bool(dispatch_request_url)
                 )
                 draw_questionnaire_panel(
@@ -1319,6 +1385,7 @@ def main() -> int:
 
             cv2.imshow("RescueSight CV Prototype", frame)
             key = cv2.waitKey(1) & 0xFF
+            key = normalize_keypress(key)
             if key == ord("q"):
                 break
             if key == ord("p"):

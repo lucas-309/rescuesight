@@ -61,6 +61,9 @@ const deriveStatus = (session: EmergencySession): EmergencySessionStatus => {
   if (dispatchStatus === "dispatched") {
     return "dispatched";
   }
+  if (dispatchStatus === "rejected") {
+    return "rejected";
+  }
   if (dispatchStatus === "pending_review") {
     return "dispatch_requested";
   }
@@ -220,6 +223,33 @@ export class InMemorySessionStore {
         ...(soapReport
           ? [createEvent("soap_generated", "SOAP report generated.", nowIso)]
           : []),
+      ],
+    };
+    next.status = deriveStatus(next);
+
+    this.sessions.set(sessionId, next);
+    return copySession(next);
+  }
+
+  setSoapReport(sessionId: string, soapReport: EmergencySoapReport): EmergencySession | null {
+    const existing = this.sessions.get(sessionId);
+    if (!existing) {
+      return null;
+    }
+
+    const nowIso = new Date().toISOString();
+    const hadSoap = Boolean(existing.soapReport);
+    const next: EmergencySession = {
+      ...existing,
+      updatedAtIso: nowIso,
+      soapReport: { ...soapReport },
+      events: [
+        ...existing.events,
+        createEvent(
+          "soap_generated",
+          hadSoap ? "SOAP report regenerated." : "SOAP report generated.",
+          nowIso,
+        ),
       ],
     };
     next.status = deriveStatus(next);

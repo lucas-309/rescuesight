@@ -537,22 +537,25 @@ Implementation constraints for this flow:
 - Questionnaire UX should be explicitly separated from passive telemetry so users can clearly see when answer input is expected.
 - Webcam/XR operator view should show explicit confirmation when dispatch request handoff to dashboard succeeds or fails.
 
-Current Execution Plan Update (2026-03-08)
+Current Execution Plan Update (2026-03-08, revised)
 
-UI/Workflow consolidation directive (remove redundant operator surfaces):
+Checklist ownership directive (webcam responder + dashboard dispatcher):
 
-1. Use the web app as the single human operator interface for demo flow:
-   - live CV summary
-   - victim snapshot preview
-   - questionnaire input
-   - dispatch queue monitoring
-2. Keep Python CV runtime as a sensor/worker process that performs inference, streams data to API, and runs webcam-native voice guidance.
-3. Avoid splitting core operator tasks across both OpenCV window and web UI.
-4. Preserve an optional developer-only debug mode in webcam runtime for CV tuning.
+1. Use webcam runtime as the responder checklist surface:
+   - snapshot
+   - location
+   - questionnaire (manual start via `h`, response via `y`/`n`)
+2. Auto-submit to backend only after all three checklist items are complete.
+3. Use web app as dispatcher review/decision surface:
+   - review submitted snapshot/location/questionnaire
+   - generate SOAP report on demand
+   - dispatch to hospital workflow or reject request
+4. Keep Python CV runtime streaming live summary data to API in parallel for dashboard awareness.
 
-Implementation constraints for this consolidation:
+Implementation constraints for this revised flow:
 
-- The default webcam run mode should be headless (no operator questionnaire/UI dependency).
-- Human-in-the-loop questionnaire should be completed in web flow before escalation, unless explicitly running legacy debug flow.
+- Do not auto-generate SOAP at questionnaire submission time by default; generation is dispatcher controlled.
+- Dispatch lifecycle must support explicit rejection state in queue and filtering.
+- Webcam overlay should explicitly show checklist completion state and successful dashboard handoff.
 - API remains the single source of truth for live summary and dispatch state.
 - Safety language constraints remain unchanged: assistive only, non-diagnostic wording, no real 911 calling.

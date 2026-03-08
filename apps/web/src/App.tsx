@@ -1,15 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
-  CreateEmergencySessionRequest,
-  CreateDispatchRequest,
   CvLiveSummary,
-  DispatchLocation,
   DispatchRequest,
   DispatchRequestStatus,
   EmergencySession,
   EmergencySessionStatus,
-  SessionCvSignalRequest,
 } from "@rescuesight/shared";
+import { ElevenLabsConvAI } from "./ElevenLabsConvAI";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -18,18 +15,10 @@ const toApiUrl = (path: string): string => {
   return `${base}${path}`;
 };
 
-const defaultDispatchQuestionnaire: CreateDispatchRequest["questionnaire"] = {
-  responsiveness: "unresponsive",
-  breathing: "abnormal_or_absent",
-  pulse: "unknown",
-  severeBleeding: false,
-  majorTrauma: false,
-  notes: "",
-};
-
 const dispatchStatusLabelMap: Record<DispatchRequestStatus, string> = {
   pending_review: "Pending Review",
   dispatched: "Dispatched",
+  rejected: "Rejected",
   resolved: "Resolved",
 };
 
@@ -40,6 +29,7 @@ const sessionStatusOrder: EmergencySessionStatus[] = [
   "questionnaire_completed",
   "dispatch_requested",
   "dispatched",
+  "rejected",
   "resolved",
 ];
 
@@ -50,6 +40,7 @@ const sessionStatusLabelMap: Record<EmergencySessionStatus, string> = {
   questionnaire_completed: "Questionnaire Completed",
   dispatch_requested: "Dispatch Requested",
   dispatched: "Dispatched",
+  rejected: "Rejected",
   resolved: "Resolved",
 };
 
@@ -83,212 +74,25 @@ const formatAgo = (value: string): string => {
   return `${hours}h ago`;
 };
 
-const formatLocationInline = (location: DispatchLocation): string =>
-  `${location.label} (${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)})`;
-
-const deriveAssessment = (
-  questionnaire: CreateDispatchRequest["questionnaire"],
-  liveSummary: CvLiveSummary | null,
-): { label: string; acuity: "critical" | "high"; rationale: string } => {
-  const reasons: string[] = [];
-
-  const likelyCardiacArrest =
-    questionnaire.responsiveness === "unresponsive" &&
-    questionnaire.breathing === "abnormal_or_absent";
-  if (likelyCardiacArrest) {
-    reasons.push("unresponsive with abnormal/absent breathing");
-    return {
-      label: "Possible out-of-hospital cardiac arrest",
-      acuity: "critical",
-      rationale: reasons.join("; "),
-    };
-  }
-
-  if (questionnaire.pulse === "absent") {
-    reasons.push("pulse documented as absent");
-    return {
-      label: "Possible circulatory collapse",
-      acuity: "critical",
-      rationale: reasons.join("; "),
-    };
-  }
-
-  if (questionnaire.severeBleeding) {
-    reasons.push("severe bleeding observed");
-    return {
-      label: "Possible hemorrhagic emergency",
-      acuity: "critical",
-      rationale: reasons.join("; "),
-    };
-  }
-
-  if (questionnaire.majorTrauma) {
-    reasons.push("major trauma suspected");
-    return {
-      label: "Possible major trauma emergency",
-      acuity: "critical",
-      rationale: reasons.join("; "),
-    };
-  }
-
-  if (
-    liveSummary?.personDownSignal.status === "person_down" &&
-    liveSummary.personDownSignal.confidence >= 0.75
-  ) {
-    reasons.push("high-confidence CV person-down signal");
-    return {
-      label: "High-risk person-down medical event",
-      acuity: "high",
-      rationale: reasons.join("; "),
-    };
-  }
-
-  if (questionnaire.breathing === "abnormal_or_absent") {
-    reasons.push("abnormal breathing reported");
-  }
-  if (questionnaire.responsiveness === "unknown") {
-    reasons.push("responsiveness remains unknown");
-  }
-  if (liveSummary?.personDownSignal.status === "uncertain") {
-    reasons.push("CV person-down status uncertain");
-  }
-
-  return {
-    label: "Undifferentiated medical emergency",
-    acuity: "high",
-    rationale: reasons.join("; ") || "limited findings available",
-  };
-};
-
-const buildSoapReportText = (
-  questionnaire: CreateDispatchRequest["questionnaire"],
-  liveSummary: CvLiveSummary | null,
-  location: DispatchLocation | null,
-): string => {
-  const generatedAt = new Date().toISOString();
-  const assessment = deriveAssessment(questionnaire, liveSummary);
-
-  const subjective = [
-    `Bystander questionnaire: responsiveness=${questionnaire.responsiveness}, breathing=${questionnaire.breathing}, pulse=${questionnaire.pulse}.`,
-    `Severe bleeding=${questionnaire.severeBleeding ? "yes" : "no"}, major trauma=${questionnaire.majorTrauma ? "yes" : "no"}.`,
-    questionnaire.notes?.trim()
-      ? `Bystander free-text notes: ${questionnaire.notes.trim()}`
-      : "Bystander free-text notes: none provided.",
-  ].join(" ");
-
-  const objectiveLines: string[] = [];
-  if (liveSummary) {
-    objectiveLines.push(
-      `CV source=${liveSummary.sourceDeviceId ?? "unknown"}, updated=${formatDateTime(liveSummary.updatedAtIso)}.`,
-    );
-    objectiveLines.push(
-      `Person-down=${liveSummary.personDownSignal.status} (${liveSummary.personDownSignal.confidence.toFixed(2)}).`,
-    );
-    if (liveSummary.victimSnapshot?.capturedAtIso) {
-      objectiveLines.push(
-        `Victim snapshot captured=${formatDateTime(liveSummary.victimSnapshot.capturedAtIso)}.`,
-      );
-    } else if (liveSummary.victimSnapshot?.frameTimestampMs) {
-      objectiveLines.push(`Victim snapshot frame ts=${liveSummary.victimSnapshot.frameTimestampMs}.`);
-    }
-    objectiveLines.push(
-      `Compression=${liveSummary.signal.compressionRateBpm} BPM (${liveSummary.signal.compressionRhythmQuality}), placement=${liveSummary.signal.handPlacementStatus} (${liveSummary.signal.placementConfidence.toFixed(2)}), visibility=${liveSummary.signal.visibility}.`,
-    );
-  } else {
-    objectiveLines.push("Live CV summary unavailable at time of report generation.");
-  }
-
-  if (location) {
-    objectiveLines.push(`Scene location=${formatLocationInline(location)}.`);
-    if (location.indoorDescriptor) {
-      objectiveLines.push(`Indoor descriptor=${location.indoorDescriptor}.`);
-    }
-  } else {
-    objectiveLines.push("Scene location unavailable.");
-  }
-  const objective = objectiveLines.join(" ");
-
-  const planItems: string[] = [
-    "Activate/continue EMS dispatch and maintain continuous monitoring until handoff.",
-    "Re-check responsiveness, breathing, and pulse every 1-2 minutes or with status change.",
-  ];
-  if (assessment.acuity === "critical") {
-    planItems.push("Prioritize immediate critical-response pathway and rapid EMT arrival.");
-  }
-  if (questionnaire.responsiveness === "unresponsive" && questionnaire.breathing === "abnormal_or_absent") {
-    planItems.push("Begin/continue high-quality CPR and prepare AED if available.");
-  }
-  if (questionnaire.severeBleeding) {
-    planItems.push("Apply direct pressure and hemorrhage control measures.");
-  }
-  if (questionnaire.majorTrauma) {
-    planItems.push("Minimize movement and follow trauma precautions while awaiting EMT.");
-  }
-  planItems.push("Document timeline updates and transfer this report to responding EMT team.");
-  const plan = planItems.join(" ");
-
-  return [
-    "SOAP REPORT (EMT handoff format, assistive draft)",
-    `Generated: ${formatDateTime(generatedAt)}`,
-    "",
-    `S: ${subjective}`,
-    `O: ${objective}`,
-    `A: ${assessment.label}. Acuity=${assessment.acuity}. Rationale: ${assessment.rationale}.`,
-    `P: ${plan}`,
-    "",
-    "Safety note: This auto-generated report is assistive and does not replace clinical judgment.",
-  ].join("\n");
-};
-
-const mergeQuestionnaireNotesWithSoap = (
-  manualNotes: string | undefined,
-  soapReport: string,
-): string => {
-  const manual = manualNotes?.trim();
-  const combined = [
-    manual ? `BYSTANDER NOTES\n${manual}` : "BYSTANDER NOTES\nNone provided.",
-    "AUTOGENERATED SOAP REPORT",
-    soapReport,
-  ].join("\n\n");
-  return combined.slice(0, 8_000);
-};
-
 export const App = () => {
   type QueueFilter = EmergencySessionStatus | "all";
-
-  const [questionnaire, setQuestionnaire] = useState(defaultDispatchQuestionnaire);
-  const [latestDispatchRequest, setLatestDispatchRequest] = useState<DispatchRequest | null>(null);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const [liveSummary, setLiveSummary] = useState<CvLiveSummary | null>(null);
   const [liveStatus, setLiveStatus] = useState<string | null>(null);
 
   const [queue, setQueue] = useState<EmergencySession[]>([]);
   const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
-
-  const [dispatchLoading, setDispatchLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
-
-  const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
   const [queueStatus, setQueueStatus] = useState<string | null>(null);
-  const [soapReportDraft, setSoapReportDraft] = useState("");
-  const [soapDraftTouched, setSoapDraftTouched] = useState(false);
+
   const [soapEditorBySession, setSoapEditorBySession] = useState<Record<string, string>>({});
   const [soapSaveLoadingBySession, setSoapSaveLoadingBySession] = useState<Record<string, boolean>>({});
+  const [actionLoadingBySession, setActionLoadingBySession] = useState<Record<string, boolean>>({});
 
   const liveSummaryEndpoint = useMemo(() => toApiUrl("/api/cv/live-summary"), []);
   const sessionsEndpoint = useMemo(() => toApiUrl("/api/sessions"), []);
-  const effectiveLocation = liveSummary?.location ?? null;
-  const generatedSoapReportPreview = useMemo(
-    () => buildSoapReportText(questionnaire, liveSummary, effectiveLocation),
-    [questionnaire, liveSummary, effectiveLocation],
-  );
-
-  useEffect(() => {
-    if (!soapDraftTouched) {
-      setSoapReportDraft(generatedSoapReportPreview);
-    }
-  }, [generatedSoapReportPreview, soapDraftTouched]);
+  const dispatchRequestsEndpoint = useMemo(() => toApiUrl("/api/dispatch/requests"), []);
+  const elevenLabsAgentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID ?? "";
 
   const refreshLiveSummary = async () => {
     try {
@@ -296,7 +100,7 @@ export const App = () => {
       if (response.status === 404) {
         setLiveSummary(null);
         setLiveStatus(
-          "No CV snapshot uploaded yet. Start run_webcam.py and press P in the webcam window to capture/upload.",
+          "No CV snapshot uploaded yet. Start run_webcam.py, complete checklist, and use P for manual snapshot capture if needed.",
         );
         return;
       }
@@ -306,7 +110,7 @@ export const App = () => {
 
       const payload = (await response.json()) as { summary: CvLiveSummary };
       setLiveSummary(payload.summary);
-      setLiveStatus(`Latest uploaded snapshot from ${payload.summary.sourceDeviceId ?? "unknown device"}.`);
+      setLiveStatus(`Latest CV summary from ${payload.summary.sourceDeviceId ?? "unknown device"}.`);
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unknown request error";
       setLiveSummary(null);
@@ -343,141 +147,33 @@ export const App = () => {
     void refreshQueue("all");
     void refreshLiveSummary();
 
-    const intervalId = window.setInterval(() => {
+    const liveIntervalId = window.setInterval(() => {
       void refreshLiveSummary();
     }, 1500);
 
     return () => {
-      window.clearInterval(intervalId);
+      window.clearInterval(liveIntervalId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     void refreshQueue(queueFilter);
-    const intervalId = window.setInterval(() => {
+    const queueIntervalId = window.setInterval(() => {
       void refreshQueue(queueFilter);
-    }, 2_000);
+    }, 2000);
+
     return () => {
-      window.clearInterval(intervalId);
+      window.clearInterval(queueIntervalId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queueFilter]);
 
-  const submitDispatchRequest = async () => {
-    setDispatchLoading(true);
-    setDispatchStatus(null);
-
-    try {
-      if (!liveSummary) {
-        throw new Error("No live CV summary available. Stream camera stats first.");
-      }
-
-      const location = liveSummary.location;
-      if (!location) {
-        throw new Error(
-          "No location is attached to the uploaded snapshot. Add location args in run_webcam.py.",
-        );
-      }
-      const effectiveSoapReport = (soapReportDraft.trim() || generatedSoapReportPreview).slice(0, 12_000);
-      const questionnaireWithSoap: CreateDispatchRequest["questionnaire"] = {
-        ...questionnaire,
-        notes: mergeQuestionnaireNotesWithSoap(questionnaire.notes, effectiveSoapReport),
-      };
-
-      const createSessionPayload: CreateEmergencySessionRequest = {
-        source: "web",
-        sourceDeviceId: liveSummary.sourceDeviceId,
-        location,
-      };
-      const createSessionResponse = await fetch(sessionsEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(createSessionPayload),
-      });
-      if (!createSessionResponse.ok) {
-        throw new Error(`Session API returned ${createSessionResponse.status} on create`);
-      }
-      const createSessionBody = (await createSessionResponse.json()) as {
-        session: { id: string };
-      };
-      const sessionId = createSessionBody.session.id;
-      setActiveSessionId(sessionId);
-
-      const cvSignalPayload: SessionCvSignalRequest = {
-        signal: liveSummary.signal,
-        victimSnapshot: liveSummary.victimSnapshot,
-        location,
-        sourceDeviceId: liveSummary.sourceDeviceId,
-      };
-      const cvSignalResponse = await fetch(`${sessionsEndpoint}/${sessionId}/cv-signal`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cvSignalPayload),
-      });
-      if (!cvSignalResponse.ok) {
-        throw new Error(`Session API returned ${cvSignalResponse.status} on CV signal`);
-      }
-
-      const questionnaireResponse = await fetch(`${sessionsEndpoint}/${sessionId}/questionnaire`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          questionnaire: questionnaireWithSoap,
-        }),
-      });
-      if (!questionnaireResponse.ok) {
-        throw new Error(`Session API returned ${questionnaireResponse.status} on questionnaire`);
-      }
-      const soapPatchResponse = await fetch(`${sessionsEndpoint}/${sessionId}/soap-report`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          combinedText: effectiveSoapReport,
-          editor: "web_operator",
-        }),
-      });
-      if (!soapPatchResponse.ok) {
-        throw new Error(`Session API returned ${soapPatchResponse.status} on SOAP edit save`);
-      }
-
-      const response = await fetch(`${sessionsEndpoint}/${sessionId}/dispatch-request`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          emergencyCallRequested: true,
-        }),
-      });
-      if (!response.ok) {
-        throw new Error(`Session API returned ${response.status} on dispatch create`);
-      }
-
-      const body = (await response.json()) as {
-        session: { id: string };
-        request: DispatchRequest;
-        backendEscalation: { queued: boolean; channel: string; requestId: string };
-      };
-
-      setLatestDispatchRequest(body.request);
-      setDispatchStatus(
-        `Escalation queued to ${body.backendEscalation.channel} (${body.backendEscalation.requestId}) via session ${body.session.id}.`,
-      );
-      await refreshQueue(queueFilter);
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
-      setDispatchStatus(`Unable to create dispatch request: ${message}`);
-    } finally {
-      setDispatchLoading(false);
-    }
-  };
-
-  const dispatchUnitPlaceholder = (requestId: string) => {
-    setQueueStatus(`Dispatch EMT clicked for ${requestId}.`);
-  };
-
-  const resetSoapDraftToGenerated = () => {
-    setSoapReportDraft(generatedSoapReportPreview);
-    setSoapDraftTouched(false);
+  const setActionLoading = (sessionId: string, loading: boolean) => {
+    setActionLoadingBySession((current) => ({
+      ...current,
+      [sessionId]: loading,
+    }));
   };
 
   const saveSessionSoapReport = async (sessionId: string, combinedText: string) => {
@@ -512,25 +208,125 @@ export const App = () => {
     }
   };
 
+  const generateSessionSoapReport = async (session: EmergencySession) => {
+    setActionLoading(session.id, true);
+    setQueueStatus(null);
+    try {
+      const response = await fetch(`${sessionsEndpoint}/${session.id}/soap-report/generate`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error(`Session API returned ${response.status} on SOAP generation`);
+      }
+
+      setSoapEditorBySession((current) => {
+        if (!(session.id in current)) {
+          return current;
+        }
+        const { [session.id]: _removed, ...rest } = current;
+        return rest;
+      });
+      setQueueStatus(`SOAP report generated for session ${session.id}.`);
+      await refreshQueue(queueFilter);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
+      setQueueStatus(`Unable to generate SOAP report: ${message}`);
+    } finally {
+      setActionLoading(session.id, false);
+    }
+  };
+
+  const sendToHospitalDispatch = async (session: EmergencySession) => {
+    const request = session.dispatchRequest;
+    if (!request) {
+      setQueueStatus(`No dispatch request attached to session ${session.id}.`);
+      return;
+    }
+    if (!session.soapReport?.combinedText) {
+      setQueueStatus("Generate SOAP report before sending to hospital dispatch.");
+      return;
+    }
+
+    setActionLoading(session.id, true);
+    setQueueStatus(null);
+    try {
+      const response = await fetch(`${dispatchRequestsEndpoint}/${request.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "dispatched",
+          assignment: {
+            unitId: "EMT-AUTO",
+            dispatcher: "dashboard_operator",
+            etaMinutes: 8,
+          },
+          dispatchNotes: "Dispatcher approved request and forwarded SOAP handoff to hospital dispatch.",
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Dispatch API returned ${response.status} on send`);
+      }
+
+      setQueueStatus(`Request ${request.id} sent to hospital dispatch.`);
+      await refreshQueue(queueFilter);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
+      setQueueStatus(`Unable to send request to hospital dispatch: ${message}`);
+    } finally {
+      setActionLoading(session.id, false);
+    }
+  };
+
+  const rejectDispatchRequest = async (session: EmergencySession) => {
+    const request = session.dispatchRequest;
+    if (!request) {
+      setQueueStatus(`No dispatch request attached to session ${session.id}.`);
+      return;
+    }
+
+    setActionLoading(session.id, true);
+    setQueueStatus(null);
+    try {
+      const response = await fetch(`${dispatchRequestsEndpoint}/${request.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "rejected",
+          dispatchNotes: "Dispatcher rejected request after dashboard review.",
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Dispatch API returned ${response.status} on reject`);
+      }
+
+      setQueueStatus(`Request ${request.id} marked as rejected.`);
+      await refreshQueue(queueFilter);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unknown request error";
+      setQueueStatus(`Unable to reject request: ${message}`);
+    } finally {
+      setActionLoading(session.id, false);
+    }
+  };
+
   return (
     <main className="app-shell">
       <header className="hero">
-        <h1>RescueSight Dispatch Workflow</h1>
+        <h1>RescueSight Dispatcher Workflow</h1>
         <p>
-          Webcam CV runs continuously, and a still frame is uploaded when the operator presses P.
-          The UI reads that latest snapshot summary,
-          then a human responder answers a short questionnaire before escalation.
+          Webcam CV now owns the responder checklist (snapshot, location, questionnaire) and auto-submits
+          completed reports to this dashboard for dispatcher review.
         </p>
         <p className="hero-note">
-          Safety: assistive workflow only. This is not diagnosis and does not replace emergency
-          professionals.
+          Safety: assistive workflow only. This is not diagnosis and does not replace emergency professionals.
         </p>
+        <ElevenLabsConvAI agentId={elevenLabsAgentId} summary={liveSummary} />
       </header>
 
       <section className="panel">
-        <h2>1) CV Snapshot Summary</h2>
+        <h2>1) Live CV Summary (Read-Only)</h2>
         <p className="helper-text">
-          In the webcam window, press <kbd>p</kbd> to capture and upload a still image.
+          This reflects the latest camera feed summary and snapshot uploaded by the webcam runtime.
         </p>
 
         {liveSummary ? (
@@ -593,188 +389,11 @@ export const App = () => {
           </div>
         ) : null}
 
-        <div className="actions-row">
-          <button type="button" className="action-button secondary" onClick={() => void refreshLiveSummary()}>
-            Refresh Live Summary
-          </button>
-        </div>
-
         {liveStatus ? <p className="status-message">{liveStatus}</p> : null}
       </section>
 
       <section className="panel">
-        <h2>2) Human-In-The-Loop Questionnaire</h2>
-        <p className="helper-text">
-          Answer quick bystander checks. Escalation uses the latest live CV summary stats and
-          location data.
-        </p>
-
-        <div className="form-grid">
-          <label>
-            Responsiveness
-            <select
-              value={questionnaire.responsiveness}
-              onChange={(event) =>
-                setQuestionnaire((current) => ({
-                  ...current,
-                  responsiveness: event.target.value as CreateDispatchRequest["questionnaire"]["responsiveness"],
-                }))
-              }
-            >
-              <option value="unresponsive">Unresponsive</option>
-              <option value="responsive">Responsive</option>
-              <option value="unknown">Unknown</option>
-            </select>
-          </label>
-
-          <label>
-            Breathing
-            <select
-              value={questionnaire.breathing}
-              onChange={(event) =>
-                setQuestionnaire((current) => ({
-                  ...current,
-                  breathing: event.target.value as CreateDispatchRequest["questionnaire"]["breathing"],
-                }))
-              }
-            >
-              <option value="abnormal_or_absent">Abnormal or absent</option>
-              <option value="normal">Normal</option>
-              <option value="unknown">Unknown</option>
-            </select>
-          </label>
-
-          <label>
-            Pulse
-            <select
-              value={questionnaire.pulse}
-              onChange={(event) =>
-                setQuestionnaire((current) => ({
-                  ...current,
-                  pulse: event.target.value as CreateDispatchRequest["questionnaire"]["pulse"],
-                }))
-              }
-            >
-              <option value="unknown">Unknown</option>
-              <option value="absent">Absent</option>
-              <option value="present">Present</option>
-            </select>
-          </label>
-
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={questionnaire.severeBleeding}
-              onChange={(event) =>
-                setQuestionnaire((current) => ({
-                  ...current,
-                  severeBleeding: event.target.checked,
-                }))
-              }
-            />
-            Severe bleeding observed
-          </label>
-
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={questionnaire.majorTrauma}
-              onChange={(event) =>
-                setQuestionnaire((current) => ({
-                  ...current,
-                  majorTrauma: event.target.checked,
-                }))
-              }
-            />
-            Major trauma suspected
-          </label>
-        </div>
-
-        <label className="textarea-label">
-          Bystander notes
-          <textarea
-            value={questionnaire.notes ?? ""}
-            onChange={(event) =>
-              setQuestionnaire((current) => ({
-                ...current,
-                notes: event.target.value,
-              }))
-            }
-            placeholder="Additional scene context for dispatchers"
-          />
-        </label>
-
-        <div className="soap-card">
-          <h3>Auto-Generated SOAP Report</h3>
-          <p className="helper-text">
-            Combines live CV summary + questionnaire inputs into an EMT handoff-style SOAP draft.
-            You can edit this before escalation so professionals can review and correct details.
-          </p>
-          <label className="textarea-label">
-            Editable SOAP draft
-            <textarea
-              className="soap-editor"
-              value={soapReportDraft}
-              onChange={(event) => {
-                setSoapDraftTouched(true);
-                setSoapReportDraft(event.target.value);
-              }}
-            />
-          </label>
-          <div className="actions-row">
-            <button
-              type="button"
-              className="action-button secondary"
-              disabled={dispatchLoading}
-              onClick={resetSoapDraftToGenerated}
-            >
-              Reset To Auto-Draft
-            </button>
-          </div>
-        </div>
-
-        <div className="actions-row">
-          <button
-            type="button"
-            className="action-button"
-            disabled={dispatchLoading}
-            onClick={submitDispatchRequest}
-          >
-            {dispatchLoading ? "Escalating..." : "Send Backend Emergency Escalation"}
-          </button>
-        </div>
-
-        {latestDispatchRequest ? (
-          <div className="result-card">
-            <p>
-              Dispatch Request ID: <strong>{latestDispatchRequest.id}</strong>
-            </p>
-            <p>
-              Priority: <strong>{priorityLabelMap[latestDispatchRequest.priority]}</strong>
-            </p>
-            <p>
-              Status: <strong>{dispatchStatusLabelMap[latestDispatchRequest.status]}</strong>
-            </p>
-            {latestDispatchRequest.victimSnapshot?.imageDataUrl ? (
-              <div className="victim-image-block">
-                <p className="meta-line">Victim snapshot</p>
-                <img
-                  className="victim-image"
-                  src={latestDispatchRequest.victimSnapshot.imageDataUrl}
-                  alt={`Victim snapshot for request ${latestDispatchRequest.id}`}
-                />
-              </div>
-            ) : null}
-            <p className="safety-notice">{latestDispatchRequest.safetyNotice}</p>
-          </div>
-        ) : null}
-
-        {activeSessionId ? <p className="meta-line">Last unified session ID: {activeSessionId}</p> : null}
-        {dispatchStatus ? <p className="status-message">{dispatchStatus}</p> : null}
-      </section>
-
-      <section className="panel">
-        <h2>3) Pseudo-Hospital Dispatch Dashboard</h2>
+        <h2>2) RescueSight Dispatch Dashboard</h2>
         <div className="queue-toolbar">
           <label>
             Queue filter
@@ -816,6 +435,10 @@ export const App = () => {
               request?.victimSnapshot ??
               null;
 
+            const sessionBusy =
+              Boolean(actionLoadingBySession[session.id]) ||
+              Boolean(soapSaveLoadingBySession[session.id]);
+
             return (
               <article key={session.id} className="queue-card">
                 <header className="queue-card-header">
@@ -824,6 +447,11 @@ export const App = () => {
                     <span className={`badge status-${session.status}`}>
                       {sessionStatusLabelMap[session.status]}
                     </span>
+                    {request ? (
+                      <span className={`badge status-${request.status}`}>
+                        {dispatchStatusLabelMap[request.status]}
+                      </span>
+                    ) : null}
                     {request ? (
                       <span className={`badge priority-${request.priority}`}>
                         {priorityLabelMap[request.priority]}
@@ -836,6 +464,7 @@ export const App = () => {
                 <p className="meta-line">Created: {formatDateTime(session.createdAtIso)}</p>
                 <p className="meta-line">Updated: {formatDateTime(session.updatedAtIso)}</p>
                 <p className="meta-line">Source: {session.source}</p>
+
                 {location ? (
                   <p className="meta-line">
                     Location: {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
@@ -900,7 +529,15 @@ export const App = () => {
                       <button
                         type="button"
                         className="action-button secondary"
-                        disabled={Boolean(soapSaveLoadingBySession[session.id])}
+                        disabled={sessionBusy}
+                        onClick={() => void generateSessionSoapReport(session)}
+                      >
+                        {actionLoadingBySession[session.id] ? "Working..." : "Regenerate SOAP Draft"}
+                      </button>
+                      <button
+                        type="button"
+                        className="action-button secondary"
+                        disabled={sessionBusy}
                         onClick={() =>
                           void saveSessionSoapReport(
                             session.id,
@@ -912,10 +549,21 @@ export const App = () => {
                       </button>
                     </div>
                   </div>
-                ) : questionnaire?.notes ? (
-                  <p className="notes">Notes: {questionnaire.notes}</p>
-                ) : null}
+                ) : (
+                  <div className="actions-row">
+                    <p className="meta-line">SOAP report not generated yet.</p>
+                    <button
+                      type="button"
+                      className="action-button secondary"
+                      disabled={sessionBusy}
+                      onClick={() => void generateSessionSoapReport(session)}
+                    >
+                      {actionLoadingBySession[session.id] ? "Working..." : "Generate SOAP Draft"}
+                    </button>
+                  </div>
+                )}
 
+                {questionnaire?.notes ? <p className="notes">Notes: {questionnaire.notes}</p> : null}
                 {request?.dispatchNotes ? <p className="notes">Context: {request.dispatchNotes}</p> : null}
 
                 {request?.assignment ? (
@@ -928,15 +576,27 @@ export const App = () => {
                   </div>
                 ) : null}
 
-                <div className="actions-row">
-                  <button
-                    type="button"
-                    className="action-button"
-                    onClick={() => dispatchUnitPlaceholder(request?.id ?? session.id)}
-                  >
-                    Dispatch EMT (placeholder)
-                  </button>
-                </div>
+                {request?.status === "pending_review" ? (
+                  <div className="actions-row">
+                    <button
+                      type="button"
+                      className="action-button"
+                      disabled={sessionBusy}
+                      onClick={() => void sendToHospitalDispatch(session)}
+                    >
+                      {actionLoadingBySession[session.id] ? "Working..." : "Send To Hospital Dispatch"}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="action-button danger"
+                      disabled={sessionBusy}
+                      onClick={() => void rejectDispatchRequest(session)}
+                    >
+                      {actionLoadingBySession[session.id] ? "Working..." : "Reject Request"}
+                    </button>
+                  </div>
+                ) : null}
               </article>
             );
           })}

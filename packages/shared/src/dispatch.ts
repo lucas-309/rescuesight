@@ -40,7 +40,11 @@ export interface EmergencyQuestionnaire {
 }
 
 export type DispatchPriority = "critical" | "high";
-export type DispatchRequestStatus = "pending_review" | "dispatched" | "resolved";
+export type DispatchRequestStatus =
+  | "pending_review"
+  | "dispatched"
+  | "rejected"
+  | "resolved";
 
 export interface DispatchAssignmentInput {
   unitId: string;

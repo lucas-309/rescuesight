@@ -14,23 +14,24 @@ from hitl_flow import (
 
 class TestHitlFlow(unittest.TestCase):
     def test_build_dispatch_questionnaire_from_responses(self) -> None:
-        questionnaire = build_dispatch_questionnaire_from_responses([False, False, True, True])
+        questionnaire = build_dispatch_questionnaire_from_responses([False, False, False, True, True])
         self.assertEqual(questionnaire["responsiveness"], "unresponsive")
         self.assertEqual(questionnaire["breathing"], "abnormal_or_absent")
-        self.assertEqual(questionnaire["pulse"], "unknown")
-        self.assertEqual(questionnaire["severeBleeding"], False)
-        self.assertEqual(questionnaire["majorTrauma"], False)
+        self.assertEqual(questionnaire["pulse"], "absent")
+        self.assertEqual(questionnaire["severeBleeding"], True)
+        self.assertEqual(questionnaire["majorTrauma"], True)
         notes = questionnaire["notes"]
         self.assertIsInstance(notes, str)
-        self.assertIn("FAST signs observed", str(notes))
-        self.assertIn("heart-related warning signs observed", str(notes))
+        self.assertIn("pulse not detected", str(notes))
+        self.assertIn("severe bleeding observed", str(notes))
+        self.assertIn("major trauma suspected", str(notes))
 
     def test_build_dispatch_questionnaire_rejects_wrong_length(self) -> None:
         with self.assertRaises(ValueError):
-            build_dispatch_questionnaire_from_responses([True, False, True])
+            build_dispatch_questionnaire_from_responses([True, False, True, False])
 
     def test_build_dispatch_request_payload(self) -> None:
-        questionnaire = build_dispatch_questionnaire_from_responses([True, True, False, False])
+        questionnaire = build_dispatch_questionnaire_from_responses([True, True, True, False, False])
         victim_snapshot = {
             "imageDataUrl": "data:image/jpeg;base64,ZmFrZQ==",
             "capturedAtIso": "2026-03-07T00:00:00Z",
@@ -98,14 +99,19 @@ class TestHitlFlow(unittest.TestCase):
         )
         self.assertTrue(session.auto_prompt_ready)
         self.assertIsNotNone(session.pending_victim_snapshot)
+
+    def test_session_preserves_manual_snapshot_when_trigger_not_ready(self) -> None:
+        session = HitlQuestionnaireSession(cooldown_ms=0)
+        session.pending_victim_snapshot = {"imageDataUrl": "data:image/jpeg;base64,ZmFrZQ=="}
+
         self.assertFalse(
             session.set_auto_prompt_ready(
                 trigger_ready=False,
-                timestamp_ms=1_050,
-                status="trigger dropped",
+                timestamp_ms=10,
+                status="idle",
             )
         )
-        self.assertTrue(session.auto_prompt_ready)
+        self.assertFalse(session.auto_prompt_ready)
         self.assertIsNotNone(session.pending_victim_snapshot)
 
     def test_session_questionnaire_completion(self) -> None:
@@ -120,8 +126,9 @@ class TestHitlFlow(unittest.TestCase):
 
         self.assertFalse(session.handle_key(YES_KEY, timestamp_ms=10))
         self.assertFalse(session.handle_key(NO_KEY, timestamp_ms=20))
-        self.assertFalse(session.handle_key(YES_KEY, timestamp_ms=30))
-        self.assertTrue(session.handle_key(NO_KEY, timestamp_ms=40))
+        self.assertFalse(session.handle_key(NO_KEY, timestamp_ms=30))
+        self.assertFalse(session.handle_key(YES_KEY, timestamp_ms=40))
+        self.assertTrue(session.handle_key(NO_KEY, timestamp_ms=50))
 
         self.assertFalse(session.active)
         self.assertIsNotNone(session.completed_answers)
@@ -129,9 +136,12 @@ class TestHitlFlow(unittest.TestCase):
             self.fail("completed_answers should be available after final response")
         self.assertEqual(session.completed_answers["responsiveness"], "responsive")
         self.assertEqual(session.completed_answers["breathing"], "abnormal_or_absent")
+        self.assertEqual(session.completed_answers["pulse"], "absent")
+        self.assertEqual(session.completed_answers["severeBleeding"], True)
+        self.assertEqual(session.completed_answers["majorTrauma"], False)
         notes = session.completed_answers["notes"]
         self.assertIsInstance(notes, str)
-        self.assertIn("FAST signs observed", str(notes))
+        self.assertIn("pulse not detected", str(notes))
         self.assertIsNotNone(session.pending_victim_snapshot)
 
     def test_session_mark_submitted_clears_state(self) -> None:
@@ -141,6 +151,7 @@ class TestHitlFlow(unittest.TestCase):
         session.handle_key(YES_KEY, timestamp_ms=20)
         session.handle_key(NO_KEY, timestamp_ms=30)
         session.handle_key(NO_KEY, timestamp_ms=40)
+        session.handle_key(NO_KEY, timestamp_ms=50)
 
         session.mark_submitted("ok", timestamp_ms=50)
         self.assertFalse(session.active)
@@ -150,21 +161,17 @@ class TestHitlFlow(unittest.TestCase):
         self.assertIsNone(session.last_submission_success)
         self.assertIsNone(session.pending_victim_snapshot)
 
-    def test_session_manual_start_requires_confirmation_without_trigger(self) -> None:
+    def test_session_manual_start_via_h_starts_immediately(self) -> None:
         session = HitlQuestionnaireSession(cooldown_ms=0)
         session.handle_key(FORCE_START_KEY, timestamp_ms=0)
 
-        self.assertFalse(session.active)
-        self.assertTrue(session.manual_start_confirmation_pending)
-        self.assertIn("confirm", session.last_status.lower())
-
-        session.handle_key(NO_KEY, timestamp_ms=1)
-        self.assertFalse(session.active)
-        self.assertFalse(session.manual_start_confirmation_pending)
-
-        session.handle_key(FORCE_START_KEY, timestamp_ms=2)
-        session.handle_key(YES_KEY, timestamp_ms=3)
         self.assertTrue(session.active)
+        self.assertFalse(session.manual_start_confirmation_pending)
+        self.assertIn("manual questionnaire started", session.last_status.lower())
+
+        session.handle_key(FORCE_START_KEY, timestamp_ms=1)
+        self.assertTrue(session.active)
+        self.assertIn("already active", session.last_status.lower())
         self.assertFalse(session.manual_start_confirmation_pending)
 
     def test_session_mark_submitted_tracks_dashboard_confirmation(self) -> None:

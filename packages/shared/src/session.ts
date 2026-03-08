@@ -17,6 +17,7 @@ export type EmergencySessionStatus =
   | "questionnaire_completed"
   | "dispatch_requested"
   | "dispatched"
+  | "rejected"
   | "resolved";
 
 export type EmergencySessionEventType =
@@ -81,6 +82,7 @@ export interface SubmitSessionQuestionnaireRequest {
   questionnaire: EmergencyQuestionnaire;
   startedAtIso?: string;
   submittedAtIso?: string;
+  generateSoapReport?: boolean;
 }
 
 export interface UpdateSessionSoapReportRequest {

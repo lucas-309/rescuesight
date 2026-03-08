@@ -71,3 +71,34 @@ test("InMemoryDispatchStore creates and dispatches request", () => {
   assert.equal(updated?.assignment?.unitId, "EMT-17");
   assert.equal(updated?.dispatchNotes, "Unit notified and en route.");
 });
+
+test("InMemoryDispatchStore supports explicit rejected status", () => {
+  const store = new InMemoryDispatchStore();
+  const request = store.createDispatchRequest({
+    location: {
+      label: "Library entrance",
+      latitude: 40.0,
+      longitude: -73.0,
+    },
+    personDownSignal: {
+      status: "person_down",
+      confidence: 0.73,
+      source: "cv",
+    },
+    questionnaire: {
+      responsiveness: "unknown",
+      breathing: "unknown",
+      pulse: "unknown",
+      severeBleeding: false,
+      majorTrauma: false,
+    },
+  });
+
+  const rejected = store.updateDispatchRequest(request.id, {
+    status: "rejected",
+    dispatchNotes: "Rejected after dispatcher review.",
+  });
+
+  assert.equal(rejected?.status, "rejected");
+  assert.equal(rejected?.dispatchNotes, "Rejected after dispatcher review.");
+});

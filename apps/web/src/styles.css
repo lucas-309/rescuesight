@@ -152,6 +152,15 @@ textarea {
   color: #153c2a;
 }
 
+.action-button.danger {
+  background: #9f1f1f;
+  color: #ffffff;
+}
+
+.action-button.danger:hover {
+  background: #7c1818;
+}
+
 .result-card {
   margin-top: 12px;
   border: 1px solid #d7ebe0;
@@ -409,6 +418,11 @@ textarea {
 .badge.status-dispatched {
   background: #dbeafe;
   color: #1e40af;
+}
+
+.badge.status-rejected {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .badge.status-resolved {

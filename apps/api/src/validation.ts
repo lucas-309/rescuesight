@@ -102,6 +102,7 @@ const QUESTIONNAIRE_PULSE_VALUES: EmergencyQuestionnaire["pulse"][] = [
 const DISPATCH_STATUS_VALUES: DispatchRequestStatus[] = [
   "pending_review",
   "dispatched",
+  "rejected",
   "resolved",
 ];
 const SESSION_SOURCE_VALUES: EmergencySessionSource[] = [
@@ -518,6 +519,10 @@ export const isValidSubmitSessionQuestionnaireRequest = (
     return false;
   }
 
+  if (value.generateSoapReport !== undefined && !isBoolean(value.generateSoapReport)) {
+    return false;
+  }
+
   return true;
 };
 
@@ -901,6 +906,7 @@ export const submitSessionQuestionnairePayloadShape = {
   questionnaire: dispatchQuestionnairePayloadShape,
   startedAtIso: "string (optional)",
   submittedAtIso: "string (optional)",
+  generateSoapReport: "boolean (optional)",
 };
 
 export const updateSessionSoapReportPayloadShape = {
@@ -917,7 +923,7 @@ export const createSessionDispatchPayloadShape = {
 };
 
 export const updateDispatchRequestPayloadShape = {
-  status: "pending_review | dispatched | resolved (optional)",
+  status: "pending_review | dispatched | rejected | resolved (optional)",
   assignment: {
     unitId: "string",
     dispatcher: "string",

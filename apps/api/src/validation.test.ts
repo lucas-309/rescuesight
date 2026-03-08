@@ -329,6 +329,12 @@ test("isValidUpdateDispatchRequest rejects unknown status", () => {
     }),
     false,
   );
+  assert.equal(
+    isValidUpdateDispatchRequest({
+      status: "rejected",
+    }),
+    true,
+  );
 });
 
 test("isValidCreateEmergencySessionRequest accepts optional session bootstrap fields", () => {
@@ -387,8 +393,22 @@ test("isValidSubmitSessionQuestionnaireRequest requires questionnaire answers", 
       },
       startedAtIso: "2026-03-08T10:00:00Z",
       submittedAtIso: "2026-03-08T10:00:10Z",
+      generateSoapReport: true,
     }),
     true,
+  );
+  assert.equal(
+    isValidSubmitSessionQuestionnaireRequest({
+      questionnaire: {
+        responsiveness: "unresponsive",
+        breathing: "abnormal_or_absent",
+        pulse: "unknown",
+        severeBleeding: false,
+        majorTrauma: false,
+      },
+      generateSoapReport: "yes",
+    }),
+    false,
   );
   assert.equal(
     isValidSubmitSessionQuestionnaireRequest({

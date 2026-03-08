@@ -269,6 +269,7 @@ export const buildApp = (options: BuildAppOptions = {}) => {
   const dispatchStatuses: DispatchRequestStatus[] = [
     "pending_review",
     "dispatched",
+    "rejected",
     "resolved",
   ];
   const sessionStatuses: EmergencySessionStatus[] = [
@@ -278,6 +279,7 @@ export const buildApp = (options: BuildAppOptions = {}) => {
     "questionnaire_completed",
     "dispatch_requested",
     "dispatched",
+    "rejected",
     "resolved",
   ];
 
@@ -463,9 +465,12 @@ export const buildApp = (options: BuildAppOptions = {}) => {
     }
 
     const payload = req.body as SubmitSessionQuestionnaireRequest;
+    const shouldGenerateSoap = payload.generateSoapReport === true;
     const liveSummary = existing.liveSummary ?? undefined;
     const location = existing.location ?? liveSummary?.location;
-    const soapReport = buildSoapReportFromContext(payload.questionnaire, liveSummary, location);
+    const soapReport = shouldGenerateSoap
+      ? buildSoapReportFromContext(payload.questionnaire, liveSummary, location)
+      : undefined;
     const updated = sessionStore.submitQuestionnaire(req.params.sessionId, payload, soapReport);
 
     if (!updated) {
@@ -474,6 +479,33 @@ export const buildApp = (options: BuildAppOptions = {}) => {
     }
 
     res.json({ session: updated, soapReport: updated.soapReport });
+  });
+
+  app.post("/api/sessions/:sessionId/soap-report/generate", (req: Request, res: Response) => {
+    const existing = sessionStore.getSession(req.params.sessionId);
+    if (!existing) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    const questionnaire = existing.questionnaire.answers;
+    if (!questionnaire) {
+      res.status(409).json({
+        error: "Questionnaire answers are required before generating SOAP.",
+      });
+      return;
+    }
+
+    const liveSummary = existing.liveSummary ?? undefined;
+    const location = existing.location ?? liveSummary?.location;
+    const soapReport = buildSoapReportFromContext(questionnaire, liveSummary, location);
+    const updated = sessionStore.setSoapReport(req.params.sessionId, soapReport);
+    if (!updated) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    res.status(201).json({ session: updated, soapReport: updated.soapReport });
   });
 
   app.patch("/api/sessions/:sessionId/soap-report", (req: Request, res: Response) => {
@@ -492,7 +524,7 @@ export const buildApp = (options: BuildAppOptions = {}) => {
     }
     if (!existing.soapReport) {
       res.status(409).json({
-        error: "SOAP report not generated yet. Submit questionnaire before editing SOAP.",
+        error: "SOAP report not generated yet. Generate SOAP before editing.",
       });
       return;
     }
@@ -654,15 +686,10 @@ export const buildApp = (options: BuildAppOptions = {}) => {
       sourceDeviceId: latestCvLiveSummary?.sourceDeviceId,
       location: payload.location,
     });
-    const compatibilitySoap = buildSoapReportFromContext(
-      payload.questionnaire,
-      latestCvLiveSummary ?? undefined,
-      payload.location,
-    );
     sessionStore.submitQuestionnaire(
       compatibilitySession.id,
       { questionnaire: payload.questionnaire },
-      compatibilitySoap,
+      undefined,
     );
     sessionStore.recordLiveSummary(
       compatibilitySession.id,
