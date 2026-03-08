@@ -1,99 +1,99 @@
-# RescueSight Architecture (Initial)
+# RescueSight Architecture
 
 ## Goals
 
-- Keep emergency workflow logic deterministic and auditable
-- Separate UI, triage rules, and reusable domain types
-- Preserve clear extension points for CV, XR overlays, and RAG support
+- Keep emergency workflow logic deterministic and auditable.
+- Keep one primary human operator surface to reduce workflow ambiguity.
+- Separate CV sensing, API state, and UI actions with clear ownership.
+- Preserve extension points for XR overlays, mobile capture, and RAG support.
 
-## Modules
+## System Boundaries
 
-## 1) `apps/web`
-
-Responsibilities:
-- Render bystander-facing triage checklist
-- Collect structured answers
-- Support demo scenario preset loading
-- Capture incident timeline details for handoff
-- Display routed emergency pathway and action steps
-- Provide CPR metronome helper for possible cardiac arrest cases
-- Generate responder handoff summary text for export
-- Persist/update incident records and handoff payloads through API
-
-Current integration:
-- `POST /api/triage/evaluate`
-- `POST /api/incidents`
-- `PATCH /api/incidents/:incidentId`
-
-## 2) `apps/api`
+## 1) `apps/web` (Primary Operator UI)
 
 Responsibilities:
-- Validate triage payloads
-- Execute deterministic triage routing logic
-- Return pathway result with urgency and action steps
-- Map triage output to XR overlay steps for Unity/Quest clients
-- Fuse optional CV hint output and enforce confirmation gates before critical XR transitions
-- Persist incident timeline/handoff records in in-memory store
-- Expose incident retrieval and handoff payload endpoints
+- Display live CV summary and victim snapshot from API.
+- Collect human-in-the-loop questionnaire responses.
+- Generate SOAP-style handoff draft.
+- Submit dispatch escalation requests.
+- Display and operate the pseudo-hospital dispatch dashboard.
+- Host the ElevenLabs voice assistant widget and push live CV context.
 
-Current endpoints:
-- `GET /health`
-- `GET /api/triage/questions`
-- `POST /api/triage/evaluate`
-- `POST /api/xr/triage`
-- `GET /api/xr/incidents/:incidentId/overlay`
-- `PATCH /api/xr/incidents/:incidentId/actions`
-- `POST /api/incidents`
-- `GET /api/incidents`
-- `GET /api/incidents/:incidentId`
-- `PATCH /api/incidents/:incidentId`
-- `GET /api/incidents/:incidentId/handoff`
+Primary integrations:
+- `GET /api/cv/live-summary`
+- `POST /api/dispatch/requests`
+- `GET /api/dispatch/requests`
+- `PATCH /api/dispatch/requests/:requestId`
+- incident/triage/XR endpoints as needed by scenario
 
-## 3) `packages/shared`
+## 2) `apps/api` (Workflow + State Authority)
 
 Responsibilities:
-- Shared interfaces for triage inputs and outputs
-- Canonical pathway identifiers
-- Shared incident timeline and persistence payload types
+- Validate request payloads.
+- Run deterministic triage routing.
+- Ingest live CV signals and maintain latest live summary state.
+- Persist dispatch queue and incident timeline state in memory.
+- Expose XR hook endpoints and CV checkpoint gating.
 
-## Data Flow
+Key endpoint groups:
+- Health: `GET /health`
+- Triage: `GET /api/triage/questions`, `POST /api/triage/evaluate`
+- Live CV: `POST /api/cv/live-signal`, `GET /api/cv/live-summary`
+- Dispatch: `POST /api/dispatch/requests`, `GET /api/dispatch/requests`, `GET /api/dispatch/requests/:requestId`, `PATCH /api/dispatch/requests/:requestId`
+- Incident/XR: existing incident + XR routes
 
-1. User completes triage questions in web UI.
-2. User optionally records timeline fields (first observed time, AED status, actions taken, notes).
-3. Web app sends typed `TriageAnswers` payload to API.
-4. API validates payload and runs decision rules.
-5. API returns `TriageEvaluationResponse` with pathway + action steps.
-6. Web app renders result, optional CPR metronome helper, and responder handoff summary.
-7. Web app persists incident timeline/handoff data via incident endpoints.
-8. API stores incident record and supports later retrieval/update.
+## 3) `cv_model/prototype` (CV Worker + CV Hook Service)
 
-## XR Hook Flow (Quest 3 / Unity)
+Responsibilities:
+- Capture camera frames and run MediaPipe-based CV inference.
+- Produce hand placement, compression rhythm, posture, and eyes-closed signals.
+- Attach victim snapshots when person-down evidence is present.
+- Stream live signals to API.
 
-1. Unity app collects confirmed triage answers.
-2. Unity posts to `POST /api/xr/triage` with optional `incidentId`.
-3. API creates or re-evaluates the incident and returns overlay-ready steps.
-4. Optional CV signal is sent to API (`cvSignal`) and evaluated through CV stub service.
-5. API returns `cvAssist` + `transitionGate`; critical progression is blocked until required checkpoints are acknowledged.
-6. Unity renders `overlaySteps` as head/world-locked instruction cards (including checkpoint prompts).
-7. Unity syncs action confirmations using `PATCH /api/xr/incidents/:incidentId/actions`.
-8. Unity can recover state after reconnect through `GET /api/xr/incidents/:incidentId/overlay`.
+Mode guidance:
+- Recommended demo mode: worker behavior feeding API for web operator flow.
+- Debug behavior: optional on-screen overlays and local controls for CV tuning.
 
-## Triage Rules (Current)
+Additional component:
+- `cv_service.py` provides CV assist endpoint for XR hook integration (`/api/cv/evaluate`, `/api/cv/frame`).
 
-- If unresponsive + not breathing normally -> `possible_cardiac_arrest`
-- Else if any FAST stroke sign -> `suspected_stroke`
-- Else if heart-related signs meet threshold -> `possible_heart_related_emergency`
-- Else -> `unclear_emergency`
+## 4) `apps/mobile` (Optional Camera Client)
 
-## Planned Extensions
+Responsibilities:
+- Capture iPhone camera frames and stream them to CV/API endpoints.
+- Render mobile-focused visual guidance using model overlay output.
 
-- CV service: Python stub implemented in `cv_model/prototype/cv_service.py` for person-down and hand-placement hints (user-confirmed) and consumed by API via `RESCUESIGHT_CV_SERVICE_URL`
-- XR overlay adapter: initial API hooks implemented, Unity rendering integration ongoing
-- RAG assistant: constrained retrieval of emergency instruction content
-- MCP tool layer: orchestrate demo tools and protocol retrieval
+## 5) `packages/shared` (Contracts)
+
+Responsibilities:
+- Shared types for triage, XR hooks, CV live summary, and dispatch.
+- Canonical payload contracts used by web, api, and other clients.
+
+## Primary Demo Data Flow (Consolidated)
+
+1. CV worker (`run_webcam.py`) captures camera frames and infers CV metrics.
+2. CV worker posts `signal` (+ optional `victimSnapshot` and `location`) to `POST /api/cv/live-signal`.
+3. API updates latest live summary state.
+4. Web polls `GET /api/cv/live-summary` and renders operator guidance.
+5. Operator answers questionnaire in web UI and submits escalation.
+6. Web posts dispatch payload to `POST /api/dispatch/requests`.
+7. API stores dispatch request and returns queue item id.
+8. Web dashboard lists queue state and supports dispatch/resolve updates.
+
+## Optional Flows
+
+- Mobile camera ingestion can replace or complement webcam worker for live signal inputs.
+- XR clients can use `POST /api/xr/triage` and associated overlay endpoints with CV checkpoint gating.
+
+## Ownership Rules
+
+- Human decision/action ownership: web UI.
+- CV sensing ownership: CV worker/mobile clients.
+- State ownership: API.
+- Safety-language ownership: all surfaces, enforced by product copy and validation conventions.
 
 ## Safety Guardrails
 
-- Keep language assistive and non-diagnostic
-- Require human confirmation for critical transitions
-- Do not claim clinical-grade validation for measurements
+- Keep language assistive and non-diagnostic.
+- Require human confirmation for critical transitions.
+- Do not claim clinical-grade measurement or autonomous medical intervention.

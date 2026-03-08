@@ -13,7 +13,8 @@ This is the Day 1 hackathon scaffold for CV signals using pre-trained MediaPipe 
 - Renders a hand-shaped target overlay (instead of a dot) to indicate where to perform CPR.
 - Uses confidence-based lock-on: after stable high-confidence frames, CPR target stays locked to reduce wobble.
 - Uses rescaled person-down confidence so likely person-down states trigger HITL flow more reliably.
-- Displays questionnaire in a dedicated on-screen panel and shows explicit dispatch-send confirmation.
+- Streams live signal + victim snapshots into API for web dashboard/operator workflows.
+- Supports optional webcam-local HITL/debug controls for development runs.
 
 ## Setup
 
@@ -69,6 +70,7 @@ Run webcam and stream live CV summary into the API (used by web dashboard):
 
 ```bash
 ./bootstrap.sh --webcam-only -- \
+  --disable-hitl \
   --post-url http://127.0.0.1:8080/api/cv/live-signal \
   --source-device-id quest3-kiosk-01 \
   --location-label "Main lobby" \
@@ -86,6 +88,8 @@ LIVE_LOCATION_LAT="37.8715" \
 LIVE_LOCATION_LON="-122.2730" \
 ./bootstrap.sh --webcam-only
 ```
+
+For the consolidated web-owned operator flow, append `-- --disable-hitl` to the command above.
 
 Run service only:
 
@@ -151,23 +155,28 @@ Optional flags:
 - `--source-device-id quest3-kiosk-01`
 - `--location-label "Main lobby" --location-lat 37.8715 --location-lon -122.2730`
 - `--api-base-url http://127.0.0.1:8080` (enable `POST /api/dispatch/requests` on questionnaire completion)
-- `--disable-hitl` (disable questionnaire trigger)
+- `--disable-hitl` (recommended for primary web-owned operator flow)
 - `--questionnaire-cooldown-sec 30`
 
-Controls:
+Controls (when webcam HITL is enabled):
 
 - `q` quit
 - `h` start questionnaire
 - `y` / `n` answer questionnaire prompts
 - `x` reset questionnaire session
 
-HITL trigger behavior:
+HITL trigger behavior (webcam-local mode only):
 
 - Auto trigger now uses sustained person-down evidence with hysteresis (smoothed posture + eyes + CPR-motion cues), instead of a single strict per-frame threshold.
 - When trigger is ready, overlay prompts: "Press H to start questionnaire now."
 - If you press `h` without trigger readiness, overlay asks for confirmation (`y` to proceed, `n` to cancel).
 - On trigger readiness, the webcam captures a victim snapshot and includes it in the dispatch request payload as `victimSnapshot`, so the dashboard can display the scene image.
 - While live streaming (`--post-url`), a recent victim snapshot is also attached to `/api/cv/live-signal` summaries when person-down evidence is present, so the web dashboard can escalate with an image.
+
+Recommended project-cohesive mode:
+
+- Keep operator actions in web dashboard only.
+- Run webcam with `--disable-hitl` so it behaves as a CV worker/sensor process.
 
 ## Quick tests
 

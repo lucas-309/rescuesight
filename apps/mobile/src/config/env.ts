@@ -3,6 +3,7 @@ const rawCvFramePostUrl = process.env.EXPO_PUBLIC_CV_FRAME_POST_URL?.trim();
 const rawCvModelFrameUrl = process.env.EXPO_PUBLIC_CV_MODEL_FRAME_URL?.trim();
 const rawCvPostIntervalMs = Number(process.env.EXPO_PUBLIC_CV_POST_INTERVAL_MS);
 const rawSourceDeviceId = process.env.EXPO_PUBLIC_SOURCE_DEVICE_ID?.trim();
+const rawElevenLabsAgentId = process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID?.trim();
 
 const removeTrailingSlash = (value: string): string =>
   value.endsWith("/") ? value.slice(0, -1) : value;
@@ -17,3 +18,5 @@ export const CV_POST_INTERVAL_MS =
     : 500;
 
 export const CV_SOURCE_DEVICE_ID = rawSourceDeviceId || "iphone-rescuesight";
+export const ELEVENLABS_AGENT_ID =
+  rawElevenLabsAgentId || "agent_0701kk51qtqvfm1v00ah9c5hvfcx";

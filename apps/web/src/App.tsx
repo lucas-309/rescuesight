@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { ElevenLabsConvAI } from "./ElevenLabsConvAI";
 import type {
+  CreateEmergencySessionRequest,
   CreateDispatchRequest,
   CvLiveSummary,
   DispatchLocation,
   DispatchRequest,
   DispatchRequestStatus,
+  EmergencySession,
+  EmergencySessionStatus,
+  SessionCvSignalRequest,
 } from "@rescuesight/shared";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -24,10 +28,28 @@ const defaultDispatchQuestionnaire: CreateDispatchRequest["questionnaire"] = {
   notes: "",
 };
 
-const statusOrder: DispatchRequestStatus[] = ["pending_review", "dispatched", "resolved"];
-
-const statusLabelMap: Record<DispatchRequestStatus, string> = {
+const dispatchStatusLabelMap: Record<DispatchRequestStatus, string> = {
   pending_review: "Pending Review",
+  dispatched: "Dispatched",
+  resolved: "Resolved",
+};
+
+const sessionStatusOrder: EmergencySessionStatus[] = [
+  "open",
+  "monitoring",
+  "questionnaire_in_progress",
+  "questionnaire_completed",
+  "dispatch_requested",
+  "dispatched",
+  "resolved",
+];
+
+const sessionStatusLabelMap: Record<EmergencySessionStatus, string> = {
+  open: "Open",
+  monitoring: "Monitoring",
+  questionnaire_in_progress: "Questionnaire In Progress",
+  questionnaire_completed: "Questionnaire Completed",
+  dispatch_requested: "Dispatch Requested",
   dispatched: "Dispatched",
   resolved: "Resolved",
 };
@@ -233,16 +255,19 @@ const mergeQuestionnaireNotesWithSoap = (
 };
 
 export const App = () => {
+  type QueueFilter = EmergencySessionStatus | "all";
+
   const [questionnaire, setQuestionnaire] = useState(defaultDispatchQuestionnaire);
   const [latestDispatchRequest, setLatestDispatchRequest] = useState<DispatchRequest | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const [liveSummary, setLiveSummary] = useState<CvLiveSummary | null>(null);
   const [liveStatus, setLiveStatus] = useState<string | null>(null);
 
   const [browserLocation, setBrowserLocation] = useState<DispatchLocation | null>(null);
 
-  const [queue, setQueue] = useState<DispatchRequest[]>([]);
-  const [queueFilter, setQueueFilter] = useState<DispatchRequestStatus | "all">("all");
+  const [queue, setQueue] = useState<EmergencySession[]>([]);
+  const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
 
   const [dispatchLoading, setDispatchLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
@@ -251,7 +276,7 @@ export const App = () => {
   const [queueStatus, setQueueStatus] = useState<string | null>(null);
 
   const liveSummaryEndpoint = useMemo(() => toApiUrl("/api/cv/live-summary"), []);
-  const dispatchRequestsEndpoint = useMemo(() => toApiUrl("/api/dispatch/requests"), []);
+  const sessionsEndpoint = useMemo(() => toApiUrl("/api/sessions"), []);
   const effectiveLocation = liveSummary?.location ?? browserLocation;
   const soapReportPreview = useMemo(
     () => buildSoapReportText(questionnaire, liveSummary, effectiveLocation),
@@ -282,26 +307,26 @@ export const App = () => {
     }
   };
 
-  const refreshQueue = async (filter: DispatchRequestStatus | "all" = queueFilter) => {
+  const refreshQueue = async (filter: QueueFilter = queueFilter) => {
     setQueueLoading(true);
     setQueueStatus(null);
 
     try {
       const query = filter === "all" ? "" : `?status=${filter}`;
-      const response = await fetch(`${dispatchRequestsEndpoint}${query}`);
+      const response = await fetch(`${sessionsEndpoint}${query}`);
       if (!response.ok) {
         throw new Error(`Queue API returned ${response.status}`);
       }
 
       const payload = (await response.json()) as {
-        requests: DispatchRequest[];
+        sessions: EmergencySession[];
         count: number;
       };
-      setQueue(payload.requests);
-      setQueueStatus(`Loaded ${payload.count} dispatch request${payload.count === 1 ? "" : "s"}.`);
+      setQueue(payload.sessions);
+      setQueueStatus(`Loaded ${payload.count} session${payload.count === 1 ? "" : "s"}.`);
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unknown request error";
-      setQueueStatus(`Unable to load dispatch queue: ${message}`);
+      setQueueStatus(`Unable to load session queue: ${message}`);
     } finally {
       setQueueLoading(false);
     }
@@ -376,31 +401,71 @@ export const App = () => {
         notes: mergeQuestionnaireNotesWithSoap(questionnaire.notes, soapReportPreview),
       };
 
-      const payload: CreateDispatchRequest = {
-        questionnaire: questionnaireWithSoap,
+      const createSessionPayload: CreateEmergencySessionRequest = {
+        source: "web",
+        sourceDeviceId: liveSummary.sourceDeviceId,
         location,
-        personDownSignal: liveSummary.personDownSignal,
-        victimSnapshot: liveSummary.victimSnapshot,
-        emergencyCallRequested: true,
       };
-
-      const response = await fetch(dispatchRequestsEndpoint, {
+      const createSessionResponse = await fetch(sessionsEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(createSessionPayload),
+      });
+      if (!createSessionResponse.ok) {
+        throw new Error(`Session API returned ${createSessionResponse.status} on create`);
+      }
+      const createSessionBody = (await createSessionResponse.json()) as {
+        session: { id: string };
+      };
+      const sessionId = createSessionBody.session.id;
+      setActiveSessionId(sessionId);
+
+      const cvSignalPayload: SessionCvSignalRequest = {
+        signal: liveSummary.signal,
+        victimSnapshot: liveSummary.victimSnapshot,
+        location,
+        sourceDeviceId: liveSummary.sourceDeviceId,
+      };
+      const cvSignalResponse = await fetch(`${sessionsEndpoint}/${sessionId}/cv-signal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cvSignalPayload),
+      });
+      if (!cvSignalResponse.ok) {
+        throw new Error(`Session API returned ${cvSignalResponse.status} on CV signal`);
+      }
+
+      const questionnaireResponse = await fetch(`${sessionsEndpoint}/${sessionId}/questionnaire`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          questionnaire: questionnaireWithSoap,
+        }),
+      });
+      if (!questionnaireResponse.ok) {
+        throw new Error(`Session API returned ${questionnaireResponse.status} on questionnaire`);
+      }
+
+      const response = await fetch(`${sessionsEndpoint}/${sessionId}/dispatch-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          emergencyCallRequested: true,
+        }),
       });
       if (!response.ok) {
-        throw new Error(`Dispatch API returned ${response.status}`);
+        throw new Error(`Session API returned ${response.status} on dispatch create`);
       }
 
       const body = (await response.json()) as {
+        session: { id: string };
         request: DispatchRequest;
         backendEscalation: { queued: boolean; channel: string; requestId: string };
       };
 
       setLatestDispatchRequest(body.request);
       setDispatchStatus(
-        `Escalation queued to ${body.backendEscalation.channel} (${body.backendEscalation.requestId}).`,
+        `Escalation queued to ${body.backendEscalation.channel} (${body.backendEscalation.requestId}) via session ${body.session.id}.`,
       );
       await refreshQueue(queueFilter);
     } catch (requestError) {
@@ -655,7 +720,7 @@ export const App = () => {
               Priority: <strong>{priorityLabelMap[latestDispatchRequest.priority]}</strong>
             </p>
             <p>
-              Status: <strong>{statusLabelMap[latestDispatchRequest.status]}</strong>
+              Status: <strong>{dispatchStatusLabelMap[latestDispatchRequest.status]}</strong>
             </p>
             {latestDispatchRequest.victimSnapshot?.imageDataUrl ? (
               <div className="victim-image-block">
@@ -671,6 +736,7 @@ export const App = () => {
           </div>
         ) : null}
 
+        {activeSessionId ? <p className="meta-line">Last unified session ID: {activeSessionId}</p> : null}
         {dispatchStatus ? <p className="status-message">{dispatchStatus}</p> : null}
       </section>
 
@@ -682,13 +748,13 @@ export const App = () => {
             <select
               value={queueFilter}
               onChange={(event) =>
-                setQueueFilter(event.target.value as DispatchRequestStatus | "all")
+                setQueueFilter(event.target.value as QueueFilter)
               }
             >
               <option value="all">All</option>
-              {statusOrder.map((status) => (
+              {sessionStatusOrder.map((status) => (
                 <option key={status} value={status}>
-                  {statusLabelMap[status]}
+                  {sessionStatusLabelMap[status]}
                 </option>
               ))}
             </select>
@@ -699,67 +765,103 @@ export const App = () => {
           </button>
         </div>
 
-        {queue.length === 0 ? <p className="helper-text">No requests in the selected queue.</p> : null}
+        {queue.length === 0 ? <p className="helper-text">No sessions in the selected queue.</p> : null}
 
         <div className="queue-grid">
-          {queue.map((request) => {
+          {queue.map((session) => {
+            const request = session.dispatchRequest ?? null;
+            const location = session.location ?? request?.location ?? null;
+            const questionnaire = session.questionnaire.answers ?? request?.questionnaire ?? null;
+            const personDownSignal =
+              session.personDownSignal ??
+              session.liveSummary?.personDownSignal ??
+              request?.personDownSignal ??
+              null;
+            const victimSnapshot =
+              session.victimSnapshot ??
+              session.liveSummary?.victimSnapshot ??
+              request?.victimSnapshot ??
+              null;
+
             return (
-              <article key={request.id} className="queue-card">
+              <article key={session.id} className="queue-card">
                 <header className="queue-card-header">
-                  <strong>{request.location.label}</strong>
+                  <strong>{location?.label ?? "Location unavailable"}</strong>
                   <div className="badge-row">
-                    <span className={`badge status-${request.status}`}>{statusLabelMap[request.status]}</span>
-                    <span className={`badge priority-${request.priority}`}>
-                      {priorityLabelMap[request.priority]}
+                    <span className={`badge status-${session.status}`}>
+                      {sessionStatusLabelMap[session.status]}
                     </span>
+                    {request ? (
+                      <span className={`badge priority-${request.priority}`}>
+                        {priorityLabelMap[request.priority]}
+                      </span>
+                    ) : null}
                   </div>
                 </header>
 
-                <p className="meta-line">Created: {formatDateTime(request.createdAtIso)}</p>
-                <p className="meta-line">
-                  Location: {request.location.latitude.toFixed(6)}, {request.location.longitude.toFixed(6)}
-                </p>
-                {request.location.indoorDescriptor ? (
-                  <p className="meta-line">Indoor: {request.location.indoorDescriptor}</p>
+                <p className="meta-line">Session: {session.id}</p>
+                <p className="meta-line">Created: {formatDateTime(session.createdAtIso)}</p>
+                <p className="meta-line">Updated: {formatDateTime(session.updatedAtIso)}</p>
+                <p className="meta-line">Source: {session.source}</p>
+                {location ? (
+                  <p className="meta-line">
+                    Location: {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
+                  </p>
                 ) : null}
+                {location?.indoorDescriptor ? <p className="meta-line">Indoor: {location.indoorDescriptor}</p> : null}
 
-                <div className="triage-line">
-                  <span>Resp: {request.questionnaire.responsiveness}</span>
-                  <span>Breathing: {request.questionnaire.breathing}</span>
-                  <span>Pulse: {request.questionnaire.pulse}</span>
-                </div>
+                {questionnaire ? (
+                  <>
+                    <div className="triage-line">
+                      <span>Resp: {questionnaire.responsiveness}</span>
+                      <span>Breathing: {questionnaire.breathing}</span>
+                      <span>Pulse: {questionnaire.pulse}</span>
+                    </div>
 
-                <div className="triage-line">
-                  <span>Severe bleeding: {request.questionnaire.severeBleeding ? "yes" : "no"}</span>
-                  <span>Major trauma: {request.questionnaire.majorTrauma ? "yes" : "no"}</span>
-                </div>
+                    <div className="triage-line">
+                      <span>Severe bleeding: {questionnaire.severeBleeding ? "yes" : "no"}</span>
+                      <span>Major trauma: {questionnaire.majorTrauma ? "yes" : "no"}</span>
+                    </div>
+                  </>
+                ) : (
+                  <p className="meta-line">Questionnaire: not submitted</p>
+                )}
 
-                <p className="meta-line">
-                  CV signal: {request.personDownSignal.status} ({request.personDownSignal.confidence.toFixed(2)})
-                </p>
-                {request.victimSnapshot?.imageDataUrl ? (
+                {personDownSignal ? (
+                  <p className="meta-line">
+                    CV signal: {personDownSignal.status} ({personDownSignal.confidence.toFixed(2)})
+                  </p>
+                ) : (
+                  <p className="meta-line">CV signal: unavailable</p>
+                )}
+
+                {victimSnapshot?.imageDataUrl ? (
                   <div className="victim-image-block">
                     <p className="meta-line">Victim snapshot</p>
                     <img
                       className="victim-image"
-                      src={request.victimSnapshot.imageDataUrl}
-                      alt={`Victim snapshot for request ${request.id}`}
+                      src={victimSnapshot.imageDataUrl}
+                      alt={`Victim snapshot for session ${session.id}`}
                       loading="lazy"
                     />
-                    {request.victimSnapshot.triggerReason ? (
-                      <p className="meta-line">Trigger: {request.victimSnapshot.triggerReason}</p>
+                    {victimSnapshot.triggerReason ? (
+                      <p className="meta-line">Trigger: {victimSnapshot.triggerReason}</p>
                     ) : null}
                   </div>
                 ) : null}
-                {request.questionnaire.notes ? (
-                  <div className="notes-block">
-                    <p className="meta-line">Questionnaire + SOAP:</p>
-                    <pre className="soap-pre compact">{request.questionnaire.notes}</pre>
-                  </div>
-                ) : null}
-                {request.dispatchNotes ? <p className="notes">Context: {request.dispatchNotes}</p> : null}
 
-                {request.assignment ? (
+                {session.soapReport?.combinedText ? (
+                  <div className="notes-block">
+                    <p className="meta-line">SOAP report:</p>
+                    <pre className="soap-pre compact">{session.soapReport.combinedText}</pre>
+                  </div>
+                ) : questionnaire?.notes ? (
+                  <p className="notes">Notes: {questionnaire.notes}</p>
+                ) : null}
+
+                {request?.dispatchNotes ? <p className="notes">Context: {request.dispatchNotes}</p> : null}
+
+                {request?.assignment ? (
                   <div className="result-card compact">
                     <p>
                       Assigned unit <strong>{request.assignment.unitId}</strong> by{" "}
@@ -773,7 +875,7 @@ export const App = () => {
                   <button
                     type="button"
                     className="action-button"
-                    onClick={() => dispatchUnitPlaceholder(request.id)}
+                    onClick={() => dispatchUnitPlaceholder(request?.id ?? session.id)}
                   >
                     Dispatch EMT (placeholder)
                   </button>

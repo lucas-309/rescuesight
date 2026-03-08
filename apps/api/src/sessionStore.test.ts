@@ -92,7 +92,7 @@ test("InMemorySessionStore creates session and records lifecycle events", () => 
   const withCv = store.recordLiveSummary(created.id, buildLiveSummary());
   assert.ok(withCv);
   assert.equal(withCv?.status, "monitoring");
-  assert.equal(withCv?.events.at(-1)?.type, "cv_signal");
+  assert.equal(withCv?.events[withCv.events.length - 1]?.type, "cv_signal");
 
   const withQuestionnaire = store.submitQuestionnaire(
     created.id,
@@ -116,7 +116,10 @@ test("InMemorySessionStore creates session and records lifecycle events", () => 
   const withDispatch = store.attachDispatchRequest(created.id, buildDispatchRequest());
   assert.ok(withDispatch);
   assert.equal(withDispatch?.status, "dispatch_requested");
-  assert.equal(withDispatch?.events.at(-1)?.type, "dispatch_requested");
+  assert.equal(
+    withDispatch?.events[withDispatch.events.length - 1]?.type,
+    "dispatch_requested",
+  );
 });
 
 test("InMemorySessionStore syncs dispatch status to dispatched and resolved", () => {

@@ -40,6 +40,8 @@ const App = () => {
           <AssistanceDashboard
             summary={state.summary}
             connectedAtIso={state.connectedAtIso}
+            sessionId={state.sessionId}
+            sessionStatus={state.sessionStatus}
             statusMessage={state.statusMessage}
           />
         ) : null}

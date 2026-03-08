@@ -203,3 +203,77 @@ Build a demoable RescueSight prototype that provides bystander-focused emergency
 2. Add simple auth/token guard for XR endpoints before multi-device demos.
 3. Add optional durable persistence adapter (file/db) behind the incident store interface.
 4. Start Phase 3 RAG scaffolding with strict safety filters.
+
+## Consolidation Plan (2026-03-08): Single Operator Surface
+
+### Problem
+
+Current demo behavior can feel redundant because both:
+
+- webcam runtime shows an operator-facing flow, and
+- web app shows an operator-facing flow.
+
+This duplicates responsibility and increases failure modes.
+
+### Target State
+
+Use one coherent operator workflow:
+
+- **Web app = operator surface**
+  - live CV summary
+  - victim snapshot preview
+  - questionnaire
+  - voice assistant
+  - dispatch dashboard
+- **Python webcam = CV worker**
+  - camera capture + CV inference
+  - signal/snapshot streaming to API
+  - optional debug overlay mode only for developers
+
+### Execution Phases
+
+#### Phase A: Contract lock and mode split
+- [ ] Explicitly define runtime modes for webcam:
+  - `headless` (default; no operator UX)
+  - `debug-ui` (manual CV tuning only)
+- [ ] Ensure API and shared types cover all operator-required fields from headless stream (signal + snapshot + location + source device).
+- [ ] Add migration notes so old keyboard-driven webcam HITL flow is marked as deprecated/non-primary.
+
+#### Phase B: De-duplicate questionnaire ownership
+- [ ] Make web questionnaire the primary HITL path for escalation.
+- [ ] Keep webcam-side questionnaire disabled by default and accessible only in legacy/debug mode.
+- [ ] Confirm escalation payloads from web include live CV signal, location, and snapshot when available.
+
+#### Phase C: Run and docs cohesion
+- [ ] Provide one canonical demo command sequence:
+  - start API
+  - start web
+  - start headless webcam worker
+- [ ] Update README sections so operator instructions never ask users to choose between conflicting UIs.
+- [ ] Keep CV debug instructions in a dedicated subsection to avoid confusion.
+
+#### Phase D: Verification
+- [ ] Automated:
+  - API validation tests for live signal + snapshot
+  - API integration tests for queue payload completeness
+  - typecheck/build across workspaces
+- [ ] Manual:
+  - run headless webcam worker and verify web shows live summary + image
+  - submit escalation in web and verify dispatch queue card includes snapshot
+  - verify voice widget receives updated CV context
+
+### Acceptance Criteria
+
+1. A new operator can run the full demo using only the web UI for decisions/actions.
+2. Webcam runtime can run without requiring keyboard interaction.
+3. Dashboard always reflects backend state produced from CV worker + web HITL flow.
+4. Documentation presents one primary path and labels debug paths clearly.
+
+### Risks and Mitigations
+
+- Risk: Losing fast local CV debugging signal visibility.
+  - Mitigation: preserve explicit `debug-ui` mode.
+- Risk: Regression in escalation path when moving ownership.
+  - Mitigation: keep API contract tests around snapshot/location forwarding.
+- Risk: Team members continue using mixed flows.
+  - Mitigation: codify defaults in bootstrap scripts and docs.

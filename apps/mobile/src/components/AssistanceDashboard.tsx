@@ -1,4 +1,4 @@
-import type { CvLiveSummary } from "@rescuesight/shared";
+import type { CvLiveSummary, EmergencySessionStatus } from "@rescuesight/shared";
 import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { CvStatusPanel } from "./panels/CvStatusPanel";
 import { GuidancePanel } from "./panels/GuidancePanel";
@@ -10,12 +10,16 @@ import { formatDateTime } from "../utils/format";
 interface AssistanceDashboardProps {
   summary: CvLiveSummary | null;
   connectedAtIso: string | null;
+  sessionId: string | null;
+  sessionStatus: EmergencySessionStatus | null;
   statusMessage: string;
 }
 
 export const AssistanceDashboard = ({
   summary,
   connectedAtIso,
+  sessionId,
+  sessionStatus,
   statusMessage,
 }: AssistanceDashboardProps) => {
   const { width } = useWindowDimensions();
@@ -33,20 +37,30 @@ export const AssistanceDashboard = ({
       {isWide ? (
         <View style={styles.row}>
           <View style={styles.leftColumn}>
-            <VisualScenePanel summary={summary} />
+            <VisualScenePanel summary={summary} sessionId={sessionId} />
             <CvStatusPanel summary={summary} connectedAtIso={connectedAtIso} />
           </View>
           <View style={styles.rightColumn}>
             <GuidancePanel />
-            <SessionInfoPanel summary={summary} connectedAtIso={connectedAtIso} />
+            <SessionInfoPanel
+              summary={summary}
+              connectedAtIso={connectedAtIso}
+              sessionId={sessionId}
+              sessionStatus={sessionStatus}
+            />
           </View>
         </View>
       ) : (
         <View>
-          <VisualScenePanel summary={summary} />
+          <VisualScenePanel summary={summary} sessionId={sessionId} />
           <CvStatusPanel summary={summary} connectedAtIso={connectedAtIso} />
           <GuidancePanel />
-          <SessionInfoPanel summary={summary} connectedAtIso={connectedAtIso} />
+          <SessionInfoPanel
+            summary={summary}
+            connectedAtIso={connectedAtIso}
+            sessionId={sessionId}
+            sessionStatus={sessionStatus}
+          />
         </View>
       )}
     </ScrollView>

@@ -65,6 +65,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def placement_instruction(placement_status: str) -> str:
+    mapping = {
+        "correct": "Hand placement confirmed.",
+        "too_left": "Move hand slightly right to match target.",
+        "too_right": "Move hand slightly left to match target.",
+        "too_high": "Move hand slightly lower on sternum.",
+        "too_low": "Move hand slightly higher on sternum.",
+        "unknown": "Keep torso and hands fully visible to reacquire.",
+    }
+    return mapping.get(placement_status, "Adjust hand to target.")
+
+
 class FrameRequest:
     def __init__(
         self,
@@ -195,6 +207,35 @@ class FrameAnalyzer:
                 preview_width,
                 preview_height,
             )
+            distance_line = None
+            distance_estimate = None
+            if overlay_hand_center is not None and overlay_chest_target is not None:
+                delta_x = overlay_hand_center.x - overlay_chest_target.center.x
+                delta_y = overlay_hand_center.y - overlay_chest_target.center.y
+                normalized_distance = float((delta_x**2 + delta_y**2) ** 0.5)
+                palm_scale = max(1e-5, float(overlay_chest_target.palmScale))
+                distance_line = {
+                    "start": point_to_dict(overlay_hand_center),
+                    "end": point_to_dict(overlay_chest_target.center),
+                }
+                distance_estimate = {
+                    "normalized": round(normalized_distance, 5),
+                    "palmWidths": round(normalized_distance / palm_scale, 3),
+                    "delta": {
+                        "x": round(delta_x, 5),
+                        "y": round(delta_y, 5),
+                    },
+                }
+
+            placement_confirmed = (
+                placement_status == "correct" and placement_conf >= 0.68
+            )
+            ready_for_compressions = (
+                chest_target is not None
+                and stabilized_target.isLocked
+                and visibility in {"full", "partial"}
+                and placement_confirmed
+            )
             overlay = {
                 "handCenter": point_to_dict(overlay_hand_center),
                 "chestTarget": target_to_dict(overlay_chest_target),
@@ -202,6 +243,11 @@ class FrameAnalyzer:
                 "placementConfidence": round(placement_conf, 3),
                 "visibility": visibility,
                 "usingChestFallback": bool(stabilized_target.usingFallback),
+                "distanceLine": distance_line,
+                "distanceEstimate": distance_estimate,
+                "targetLocked": bool(stabilized_target.isLocked),
+                "placementInstruction": placement_instruction(placement_status),
+                "readyForCompressions": bool(ready_for_compressions),
             }
             return signal, overlay
 

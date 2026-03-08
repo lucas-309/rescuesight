@@ -1,23 +1,30 @@
-import type { CvLiveSummary } from "@rescuesight/shared";
+import type { CvLiveSummary, XrCvSignalInput } from "@rescuesight/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { PanelCard } from "../PanelCard";
 import { palette } from "../../theme/palette";
 import { CV_MODEL_FRAME_URL, CV_POST_INTERVAL_MS } from "../../config/env";
-import { postMobileCameraFrame, type CvModelOverlay } from "../../services/cvApi";
+import {
+  postMobileCameraFrame,
+  type CvAssistHints,
+  type CvModelOverlay,
+} from "../../services/cvApi";
 
 interface VisualScenePanelProps {
   summary: CvLiveSummary | null;
+  sessionId: string | null;
 }
 
-export const VisualScenePanel = ({ summary }: VisualScenePanelProps) => {
+export const VisualScenePanel = ({ summary, sessionId }: VisualScenePanelProps) => {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<any>(null);
   const captureInFlightRef = useRef(false);
   const [streamStatus, setStreamStatus] = useState("Waiting for camera permission");
   const [streamError, setStreamError] = useState<string | null>(null);
   const [modelOverlay, setModelOverlay] = useState<CvModelOverlay | null>(null);
+  const [latestSignal, setLatestSignal] = useState<XrCvSignalInput | null>(null);
+  const [latestAssist, setLatestAssist] = useState<CvAssistHints | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
 
   const pushCameraFrame = useCallback(async () => {
@@ -45,9 +52,13 @@ export const VisualScenePanel = ({ summary }: VisualScenePanelProps) => {
         frameHeight: frame.height,
         previewWidth: viewportSize.width > 1 ? viewportSize.width : undefined,
         previewHeight: viewportSize.height > 1 ? viewportSize.height : undefined,
+      }, {
+        sessionId: sessionId ?? undefined,
       });
       setStreamError(upload.warning);
       setModelOverlay((previous) => blendOverlay(previous, upload.overlay));
+      setLatestSignal(upload.signal);
+      setLatestAssist(upload.cvAssist);
       setStreamStatus(
         upload.mode === "model"
           ? "Streaming iPhone camera frames through CV model host"
@@ -65,7 +76,7 @@ export const VisualScenePanel = ({ summary }: VisualScenePanelProps) => {
     } finally {
       captureInFlightRef.current = false;
     }
-  }, [viewportSize.height, viewportSize.width]);
+  }, [sessionId, viewportSize.height, viewportSize.width]);
 
   useEffect(() => {
     if (!permission?.granted) {

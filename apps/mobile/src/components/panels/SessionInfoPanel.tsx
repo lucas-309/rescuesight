@@ -1,4 +1,4 @@
-import type { CvLiveSummary } from "@rescuesight/shared";
+import type { CvLiveSummary, EmergencySessionStatus } from "@rescuesight/shared";
 import { StyleSheet, Text, View } from "react-native";
 import { PanelCard } from "../PanelCard";
 import { palette } from "../../theme/palette";
@@ -7,11 +7,20 @@ import { boolLabel, formatDateTime, formatPercent } from "../../utils/format";
 interface SessionInfoPanelProps {
   connectedAtIso: string | null;
   summary: CvLiveSummary | null;
+  sessionId: string | null;
+  sessionStatus: EmergencySessionStatus | null;
 }
 
-export const SessionInfoPanel = ({ connectedAtIso, summary }: SessionInfoPanelProps) => (
+export const SessionInfoPanel = ({
+  connectedAtIso,
+  summary,
+  sessionId,
+  sessionStatus,
+}: SessionInfoPanelProps) => (
   <PanelCard title="Incident Session">
     <InfoRow label="Session active" value={boolLabel(Boolean(connectedAtIso))} />
+    <InfoRow label="Session ID" value={sessionId ?? "Not assigned"} />
+    <InfoRow label="Session status" value={sessionStatus ?? "unknown"} />
     <InfoRow label="Session timestamp" value={formatDateTime(connectedAtIso)} />
     <InfoRow label="Model connected" value={boolLabel(Boolean(connectedAtIso))} />
     <InfoRow

@@ -657,7 +657,7 @@ export const buildApp = (options: BuildAppOptions = {}) => {
         safetyNotice:
           "Compatibility CV summary synthesized for legacy /api/dispatch/requests route.",
         location: payload.location,
-        sourceDeviceId: latestCvLiveSummary?.sourceDeviceId,
+        sourceDeviceId: compatibilitySession.sourceDeviceId,
       },
     );
     sessionStore.attachDispatchRequest(compatibilitySession.id, request);

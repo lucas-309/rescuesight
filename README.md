@@ -6,6 +6,17 @@ Current demo focus: detect a **possible person-down event**, run a short **human
 
 This project is intentionally positioned as decision support, not diagnosis.
 
+## Primary Operator Flow (Single Surface)
+
+- Web app is the primary operator interface for decision steps:
+  - live CV summary and victim snapshot
+  - questionnaire input
+  - voice assistant interaction
+  - dispatch queue actions
+- CV producers (webcam/mobile) act as sensor workers that stream data to API.
+- API is the single source of truth for live summary and dispatch state.
+- Recommended webcam command for this flow uses `--disable-hitl` so questionnaire ownership stays in web.
+
 ## Current Stack
 
 - `apps/web`: React + Vite + TypeScript bystander + dispatch dashboard UI
@@ -77,6 +88,7 @@ npm run dev:mobile:web
 ```bash
 cd cv_model/prototype
 ./bootstrap.sh --webcam-only -- \
+  --disable-hitl \
   --post-url http://127.0.0.1:8080/api/cv/live-signal \
   --source-device-id quest3-kiosk-01 \
   --location-label "Main lobby" \
@@ -108,7 +120,7 @@ The web app includes an ElevenLabs ConvAI voice widget (bottom-right) that recei
 
 - CV person-down intake endpoint (`POST /api/cv/person-down`) with confidence-based questionnaire gating
 - Live CV summary pipeline (`run_webcam.py -> POST /api/cv/live-signal -> GET /api/cv/live-summary`) used by frontend
-- Human-in-the-loop questionnaire capture for pulse/breathing/responsiveness and scene notes
+- Web-owned human-in-the-loop questionnaire for pulse/breathing/responsiveness and scene notes
 - Auto-generated SOAP-style EMT handoff draft in web UI, merged into dispatch questionnaire notes
 - Backend emergency escalation flow (`POST /api/dispatch/requests`) that simulates 911-style escalation without calling 911
 - Pseudo-hospital dispatch dashboard queue:
@@ -118,12 +130,11 @@ The web app includes an ElevenLabs ConvAI voice widget (bottom-right) that recei
 - Location capture for escalation payloads (label + lat/long + indoor descriptor)
 - Existing triage, incident timeline, XR overlay, and CV checkpoint APIs remain available for integration
 
-Webcam UX highlights:
+CV worker highlights:
 - person-down confidence rescaled so likely person-down states are easier to trigger
 - posture/eyes confidence smoothing plus trigger hysteresis to reduce false flicker
-- questionnaire appears as a dedicated, clearly active panel when initiated
-- explicit on-screen confirmation when a request is successfully sent to dashboard
 - victim snapshot now flows through live CV summary and dispatch queue so dashboard cards show scene imagery
+- webcam-local questionnaire controls are available for legacy/debug runs, but are not the primary operator path
 
 ## API Endpoints
 

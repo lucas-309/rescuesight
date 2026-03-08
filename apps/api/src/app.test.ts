@@ -174,6 +174,160 @@ describe("RescueSight API routes", () => {
     assert.equal(summaryBody.summary.victimSnapshot?.imageDataUrl, "data:image/jpeg;base64,ZmFrZQ==");
   });
 
+  test("session lifecycle: create, attach CV signal, submit questionnaire, generate SOAP, and dispatch", async () => {
+    const createSessionResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "mobile",
+        sourceDeviceId: "iphone-01",
+        location: {
+          label: "Main lobby",
+          latitude: 37.8715,
+          longitude: -122.273,
+        },
+      }),
+    });
+    assert.equal(createSessionResponse.status, 201);
+    const createdSessionBody = (await createSessionResponse.json()) as {
+      session: { id: string; status: string; events: Array<{ type: string }> };
+    };
+    assert.ok(createdSessionBody.session.id);
+    assert.equal(createdSessionBody.session.status, "open");
+    assert.equal(createdSessionBody.session.events[0]?.type, "session_created");
+
+    const sessionId = createdSessionBody.session.id;
+    const cvSignalResponse = await fetch(`${baseUrl}/api/sessions/${sessionId}/cv-signal`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        signal: {
+          handPlacementStatus: "correct",
+          placementConfidence: 0.91,
+          compressionRateBpm: 108,
+          compressionRhythmQuality: "good",
+          visibility: "full",
+          frameTimestampMs: 1731001200,
+          bodyPosture: "lying",
+          postureConfidence: 0.86,
+          eyesClosedConfidence: 0.89,
+        },
+        victimSnapshot: {
+          imageDataUrl: "data:image/jpeg;base64,ZmFrZQ==",
+          capturedAtIso: "2026-03-08T00:00:00Z",
+          frameTimestampMs: 1731001200,
+          triggerReason: "lying>0.60 && eyesClosed>0.80",
+        },
+      }),
+    });
+    assert.equal(cvSignalResponse.status, 202);
+    const cvSignalBody = (await cvSignalResponse.json()) as {
+      session: { status: string; events: Array<{ type: string }> };
+      summary: { personDownSignal: { status: string; confidence: number } };
+    };
+    assert.equal(cvSignalBody.session.status, "monitoring");
+    assert.equal(cvSignalBody.session.events.some((event) => event.type === "cv_signal"), true);
+    assert.equal(cvSignalBody.summary.personDownSignal.status, "person_down");
+    assert.equal(cvSignalBody.summary.personDownSignal.confidence >= 0.6, true);
+
+    const questionnaireResponse = await fetch(`${baseUrl}/api/sessions/${sessionId}/questionnaire`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        questionnaire: {
+          responsiveness: "unresponsive",
+          breathing: "abnormal_or_absent",
+          pulse: "unknown",
+          severeBleeding: false,
+          majorTrauma: false,
+          notes: "Bystander says victim collapsed suddenly.",
+        },
+      }),
+    });
+    assert.equal(questionnaireResponse.status, 200);
+    const questionnaireBody = (await questionnaireResponse.json()) as {
+      session: { status: string; soapReport?: { combinedText: string }; events: Array<{ type: string }> };
+      soapReport?: { combinedText: string };
+    };
+    assert.equal(questionnaireBody.session.status, "questionnaire_completed");
+    assert.equal(questionnaireBody.session.events.some((event) => event.type === "questionnaire_started"), true);
+    assert.equal(
+      questionnaireBody.session.events.some((event) => event.type === "questionnaire_submitted"),
+      true,
+    );
+    assert.equal(questionnaireBody.session.events.some((event) => event.type === "soap_generated"), true);
+    assert.ok(questionnaireBody.soapReport?.combinedText.includes("SOAP REPORT"));
+
+    const dispatchResponse = await fetch(`${baseUrl}/api/sessions/${sessionId}/dispatch-request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(dispatchResponse.status, 201);
+    const dispatchBody = (await dispatchResponse.json()) as {
+      session: {
+        status: string;
+        dispatchRequest?: { id: string; status: string };
+        events: Array<{ type: string }>;
+      };
+      request: { id: string; status: string };
+    };
+    assert.equal(dispatchBody.session.status, "dispatch_requested");
+    assert.equal(dispatchBody.request.status, "pending_review");
+    assert.equal(dispatchBody.session.dispatchRequest?.id, dispatchBody.request.id);
+    assert.equal(
+      dispatchBody.session.events.some((event) => event.type === "dispatch_requested"),
+      true,
+    );
+
+    const patchDispatchResponse = await fetch(
+      `${baseUrl}/api/dispatch/requests/${dispatchBody.request.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assignment: {
+            unitId: "EMT-52",
+            dispatcher: "taylor",
+            etaMinutes: 6,
+          },
+        }),
+      },
+    );
+    assert.equal(patchDispatchResponse.status, 200);
+
+    const getSessionResponse = await fetch(`${baseUrl}/api/sessions/${sessionId}`);
+    assert.equal(getSessionResponse.status, 200);
+    const getSessionBody = (await getSessionResponse.json()) as {
+      session: { status: string; dispatchRequest?: { status: string; assignment?: { unitId: string } } };
+    };
+    assert.equal(getSessionBody.session.status, "dispatched");
+    assert.equal(getSessionBody.session.dispatchRequest?.status, "dispatched");
+    assert.equal(getSessionBody.session.dispatchRequest?.assignment?.unitId, "EMT-52");
+  });
+
+  test("session dispatch endpoint guards missing prerequisites", async () => {
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "web" }),
+    });
+    assert.equal(createResponse.status, 201);
+    const createBody = (await createResponse.json()) as {
+      session: { id: string };
+    };
+
+    const dispatchWithoutQuestionnaire = await fetch(
+      `${baseUrl}/api/sessions/${createBody.session.id}/dispatch-request`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      },
+    );
+    assert.equal(dispatchWithoutQuestionnaire.status, 409);
+  });
+
   test("POST /api/triage/evaluate returns pathway for valid payload", async () => {
     const response = await fetch(`${baseUrl}/api/triage/evaluate`, {
       method: "POST",

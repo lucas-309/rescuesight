@@ -536,3 +536,24 @@ Implementation constraints for this flow:
 - The backend dispatch workflow is a simulation and demo environment, not production emergency dispatch integration.
 - Questionnaire UX should be explicitly separated from passive telemetry so users can clearly see when answer input is expected.
 - Webcam/XR operator view should show explicit confirmation when dispatch request handoff to dashboard succeeds or fails.
+
+Current Execution Plan Update (2026-03-08)
+
+UI/Workflow consolidation directive (remove redundant operator surfaces):
+
+1. Use the web app as the single human operator interface for demo flow:
+   - live CV summary
+   - victim snapshot preview
+   - questionnaire input
+   - voice assistant activation
+   - dispatch queue monitoring
+2. Keep Python CV runtime as a sensor/worker process that performs inference and streams data to API.
+3. Avoid splitting core operator tasks across both OpenCV window and web UI.
+4. Preserve an optional developer-only debug mode in webcam runtime for CV tuning.
+
+Implementation constraints for this consolidation:
+
+- The default webcam run mode should be headless (no operator questionnaire/UI dependency).
+- Human-in-the-loop questionnaire should be completed in web flow before escalation, unless explicitly running legacy debug flow.
+- API remains the single source of truth for live summary and dispatch state.
+- Safety language constraints remain unchanged: assistive only, non-diagnostic wording, no real 911 calling.
