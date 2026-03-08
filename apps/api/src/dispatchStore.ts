@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   CreateDispatchRequest,
   CreatePersonDownEventRequest,
+  DispatchLocation,
   DispatchPriority,
   DispatchRequest,
   DispatchRequestStatus,
@@ -9,6 +10,7 @@ import type {
   PersonDownEvent,
   PersonDownSignal,
   UpdateDispatchRequest,
+  VictimSnapshot,
 } from "@rescuesight/shared";
 
 const SAFETY_NOTICE =
@@ -47,19 +49,25 @@ const inferRecommendedPriority = (signal: PersonDownSignal): DispatchPriority =>
 const requiresQuestionnaire = (signal: PersonDownSignal): boolean =>
   signal.status === "person_down" && signal.confidence >= 0.65;
 
+const copyLocation = (location: DispatchLocation): DispatchLocation => ({ ...location });
+
+const copySnapshot = (snapshot: VictimSnapshot): VictimSnapshot => ({ ...snapshot });
+
+const copyPersonDownSignal = (signal: PersonDownSignal): PersonDownSignal => ({ ...signal });
+
 const copyDispatch = (request: DispatchRequest): DispatchRequest => ({
   ...request,
-  location: { ...request.location },
+  location: copyLocation(request.location),
   questionnaire: { ...request.questionnaire },
-  personDownSignal: { ...request.personDownSignal },
-  victimSnapshot: request.victimSnapshot ? { ...request.victimSnapshot } : undefined,
+  personDownSignal: copyPersonDownSignal(request.personDownSignal),
+  victimSnapshot: request.victimSnapshot ? copySnapshot(request.victimSnapshot) : undefined,
   assignment: request.assignment ? { ...request.assignment } : undefined,
 });
 
 const copyEvent = (event: PersonDownEvent): PersonDownEvent => ({
   ...event,
-  signal: { ...event.signal },
-  location: event.location ? { ...event.location } : undefined,
+  signal: copyPersonDownSignal(event.signal),
+  location: event.location ? copyLocation(event.location) : undefined,
 });
 
 const sanitizeNotes = (value: string | undefined): string => (typeof value === "string" ? value.slice(0, 4_000) : "");

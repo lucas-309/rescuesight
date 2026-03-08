@@ -49,10 +49,17 @@ interface BuildAppOptions {
   incidentStore?: InMemoryIncidentStore;
   dispatchStore?: InMemoryDispatchStore;
   cvEvaluator?: CvEvaluator | null;
+  voiceToolSecret?: string | null;
 }
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, value));
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0;
 
 const inferPersonDownSignalFromLiveCv = (
   signal: CvLiveSignalIngestRequest["signal"],
@@ -157,6 +164,9 @@ export const buildApp = (options: BuildAppOptions = {}) => {
   const incidentStore = options.incidentStore ?? new InMemoryIncidentStore();
   const dispatchStore = options.dispatchStore ?? new InMemoryDispatchStore();
   const cvEvaluator = options.cvEvaluator ?? createCvEvaluatorFromEnv();
+  const configuredVoiceToolSecret =
+    options.voiceToolSecret ?? process.env.RESCUESIGHT_VOICE_TOOL_SECRET ?? "";
+  const voiceToolSecret = configuredVoiceToolSecret.trim();
   const cvAssistByIncident = new Map<string, XrCvAssist>();
   const blockedCheckpointIdsByIncident = new Map<string, string[]>();
   let latestCvLiveSummary: CvLiveSummary | null = null;
@@ -165,6 +175,49 @@ export const buildApp = (options: BuildAppOptions = {}) => {
     "dispatched",
     "resolved",
   ];
+  const voiceIncidentIdPayloadShape = {
+    incidentId: "string",
+  };
+  const voiceIncidentUpdatePayloadShape = {
+    incidentId: "string",
+    ...updateIncidentPayloadShape,
+  };
+  const voiceDispatchRequestIdPayloadShape = {
+    requestId: "string",
+  };
+
+  const isAuthorizedVoiceRequest = (req: Request): boolean => {
+    if (!voiceToolSecret) {
+      return true;
+    }
+
+    const headerSecret = req.header("x-rescuesight-tool-secret")?.trim();
+    if (headerSecret && headerSecret === voiceToolSecret) {
+      return true;
+    }
+
+    const authorization = req.header("authorization")?.trim();
+    if (authorization?.startsWith("Bearer ")) {
+      const token = authorization.slice("Bearer ".length).trim();
+      if (token === voiceToolSecret) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  const requireVoiceToolAuth = (req: Request, res: Response): boolean => {
+    if (isAuthorizedVoiceRequest(req)) {
+      return true;
+    }
+
+    res.status(401).json({
+      error: "Voice tool authentication failed.",
+      expectedHeaders: ["x-rescuesight-tool-secret", "Authorization: Bearer <secret>"],
+    });
+    return false;
+  };
 
   const toCheckpointOverlaySteps = (cvAssist: XrCvAssist): XrOverlayStep[] =>
     cvAssist.checkpoints
@@ -242,12 +295,252 @@ export const buildApp = (options: BuildAppOptions = {}) => {
         health: "/health",
         liveCvSummary: "/api/cv/live-summary",
         triageQuestions: "/api/triage/questions",
+        voiceToolsManifest: "/api/voice/tools/manifest",
       },
     });
   });
 
   app.get("/health", (_req: Request, res: Response) => {
     res.json({ status: "ok", service: "rescuesight-api" });
+  });
+
+  app.get("/api/voice/tools/manifest", (req: Request, res: Response) => {
+    if (!requireVoiceToolAuth(req, res)) {
+      return;
+    }
+
+    res.json({
+      service: "rescuesight-api",
+      auth: {
+        required: Boolean(voiceToolSecret),
+        acceptedHeaders: ["x-rescuesight-tool-secret", "Authorization: Bearer <secret>"],
+      },
+      tools: [
+        {
+          name: "triage_evaluate",
+          method: "POST",
+          path: "/api/voice/tools/triage-evaluate",
+          input: triagePayloadShape,
+        },
+        {
+          name: "incident_create",
+          method: "POST",
+          path: "/api/voice/tools/incident-create",
+          input: persistIncidentPayloadShape,
+        },
+        {
+          name: "incident_get",
+          method: "POST",
+          path: "/api/voice/tools/incident-get",
+          input: voiceIncidentIdPayloadShape,
+        },
+        {
+          name: "incident_update",
+          method: "POST",
+          path: "/api/voice/tools/incident-update",
+          input: voiceIncidentUpdatePayloadShape,
+        },
+        {
+          name: "incident_handoff_get",
+          method: "POST",
+          path: "/api/voice/tools/incident-handoff-get",
+          input: voiceIncidentIdPayloadShape,
+        },
+        {
+          name: "dispatch_create",
+          method: "POST",
+          path: "/api/voice/tools/dispatch-create",
+          input: createDispatchRequestPayloadShape,
+        },
+        {
+          name: "dispatch_get",
+          method: "POST",
+          path: "/api/voice/tools/dispatch-get",
+          input: voiceDispatchRequestIdPayloadShape,
+        },
+      ],
+    });
+  });
+
+  app.post("/api/voice/tools/triage-evaluate", (req: Request, res: Response) => {
+    if (!requireVoiceToolAuth(req, res)) {
+      return;
+    }
+
+    if (!isValidAnswers(req.body)) {
+      res.status(400).json({
+        error: "Invalid triage payload.",
+        expected: triagePayloadShape,
+      });
+      return;
+    }
+
+    const triage: TriageEvaluationResponse = {
+      result: evaluateTriage(req.body),
+      evaluatedAtIso: new Date().toISOString(),
+    };
+
+    res.json({ triage });
+  });
+
+  app.post("/api/voice/tools/incident-create", (req: Request, res: Response) => {
+    if (!requireVoiceToolAuth(req, res)) {
+      return;
+    }
+
+    if (!isValidPersistIncidentRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid incident payload.",
+        expected: persistIncidentPayloadShape,
+      });
+      return;
+    }
+
+    const payload = req.body as PersistIncidentRequest;
+    const incident = incidentStore.createIncident({
+      ...payload,
+      source: payload.source ?? "api",
+    });
+
+    res.status(201).json({ incident });
+  });
+
+  app.post("/api/voice/tools/incident-get", (req: Request, res: Response) => {
+    if (!requireVoiceToolAuth(req, res)) {
+      return;
+    }
+
+    if (!isObject(req.body) || !isNonEmptyString(req.body.incidentId)) {
+      res.status(400).json({
+        error: "Invalid incident lookup payload.",
+        expected: voiceIncidentIdPayloadShape,
+      });
+      return;
+    }
+
+    const incidentId = req.body.incidentId.trim();
+    const incident = incidentStore.getIncident(incidentId);
+
+    if (!incident) {
+      res.status(404).json({ error: "Incident not found." });
+      return;
+    }
+
+    res.json({ incident });
+  });
+
+  app.post("/api/voice/tools/incident-update", (req: Request, res: Response) => {
+    if (!requireVoiceToolAuth(req, res)) {
+      return;
+    }
+
+    if (!isObject(req.body) || !isNonEmptyString(req.body.incidentId)) {
+      res.status(400).json({
+        error: "Invalid incident update payload.",
+        expected: voiceIncidentUpdatePayloadShape,
+      });
+      return;
+    }
+
+    const incidentId = req.body.incidentId.trim();
+    const updateCandidate: Record<string, unknown> = { ...req.body };
+    delete updateCandidate.incidentId;
+
+    if (!isValidUpdateIncidentRequest(updateCandidate)) {
+      res.status(400).json({
+        error: "Invalid incident update payload.",
+        expected: voiceIncidentUpdatePayloadShape,
+      });
+      return;
+    }
+
+    const updated = incidentStore.updateIncident(incidentId, updateCandidate as UpdateIncidentRequest);
+    if (!updated) {
+      res.status(404).json({ error: "Incident not found." });
+      return;
+    }
+
+    res.json({ incident: updated });
+  });
+
+  app.post("/api/voice/tools/incident-handoff-get", (req: Request, res: Response) => {
+    if (!requireVoiceToolAuth(req, res)) {
+      return;
+    }
+
+    if (!isObject(req.body) || !isNonEmptyString(req.body.incidentId)) {
+      res.status(400).json({
+        error: "Invalid incident handoff payload.",
+        expected: voiceIncidentIdPayloadShape,
+      });
+      return;
+    }
+
+    const incidentId = req.body.incidentId.trim();
+    const incident = incidentStore.getIncident(incidentId);
+
+    if (!incident) {
+      res.status(404).json({ error: "Incident not found." });
+      return;
+    }
+
+    res.json({
+      incidentId: incident.id,
+      updatedAtIso: incident.updatedAtIso,
+      status: incident.status,
+      handoffSummary: incident.handoffSummary,
+      timeline: incident.timeline,
+      safetyNotice:
+        "Handoff content is bystander-reported context from RescueSight and should not be treated as diagnosis.",
+    });
+  });
+
+  app.post("/api/voice/tools/dispatch-create", (req: Request, res: Response) => {
+    if (!requireVoiceToolAuth(req, res)) {
+      return;
+    }
+
+    if (!isValidCreateDispatchRequest(req.body)) {
+      res.status(400).json({
+        error: "Invalid dispatch request payload.",
+        expected: createDispatchRequestPayloadShape,
+      });
+      return;
+    }
+
+    const payload = req.body as CreateDispatchRequest;
+    const request = dispatchStore.createDispatchRequest(payload);
+    res.status(201).json({
+      request,
+      backendEscalation: {
+        queued: true,
+        channel: "pseudo_hospital_dashboard",
+        requestId: request.id,
+      },
+    });
+  });
+
+  app.post("/api/voice/tools/dispatch-get", (req: Request, res: Response) => {
+    if (!requireVoiceToolAuth(req, res)) {
+      return;
+    }
+
+    if (!isObject(req.body) || !isNonEmptyString(req.body.requestId)) {
+      res.status(400).json({
+        error: "Invalid dispatch lookup payload.",
+        expected: voiceDispatchRequestIdPayloadShape,
+      });
+      return;
+    }
+
+    const requestId = req.body.requestId.trim();
+    const request = dispatchStore.getDispatchRequest(requestId);
+    if (!request) {
+      res.status(404).json({ error: "Dispatch request not found." });
+      return;
+    }
+
+    res.json({ request });
   });
 
   app.post("/api/cv/live-signal", (req: Request, res: Response) => {

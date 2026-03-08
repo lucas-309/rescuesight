@@ -152,6 +152,22 @@ Person-down + dispatch workflow APIs:
 - `GET /api/dispatch/requests/:requestId`
 - `PATCH /api/dispatch/requests/:requestId`
 
+ElevenLabs voice tool APIs (non-CV):
+
+- `GET /api/voice/tools/manifest`
+- `POST /api/voice/tools/triage-evaluate`
+- `POST /api/voice/tools/incident-create`
+- `POST /api/voice/tools/incident-get`
+- `POST /api/voice/tools/incident-update`
+- `POST /api/voice/tools/incident-handoff-get`
+- `POST /api/voice/tools/dispatch-create`
+- `POST /api/voice/tools/dispatch-get`
+
+Optional auth for voice tool APIs:
+
+- set `RESCUESIGHT_VOICE_TOOL_SECRET`
+- then send either `x-rescuesight-tool-secret: <secret>` or `Authorization: Bearer <secret>`
+
 External CV stub service (Python):
 
 - `GET /health`

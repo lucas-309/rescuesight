@@ -133,3 +133,40 @@ test("listIncidents returns all records", () => {
   assert.equal(ids.has(first.id), true);
   assert.equal(ids.has(second.id), true);
 });
+
+test("incident records are copy-safe when read and listed", () => {
+  const store = new InMemoryIncidentStore();
+  const created = store.createIncident(baseIncidentPayload());
+  created.timeline.actionsTaken.emsCalled = true;
+  created.answers.strokeSigns.faceDrooping = true;
+
+  const fetched = store.getIncident(created.id);
+  assert.equal(fetched?.timeline.actionsTaken.emsCalled, false);
+  assert.equal(fetched?.answers.strokeSigns.faceDrooping, false);
+
+  const listed = store.listIncidents()[0];
+  listed.timeline.actionsTaken.cprStarted = true;
+  const fetchedAgain = store.getIncident(created.id);
+  assert.equal(fetchedAgain?.timeline.actionsTaken.cprStarted, false);
+});
+
+test("updateIncident returns null for unknown id", () => {
+  const store = new InMemoryIncidentStore();
+  const missing = store.updateIncident("missing-id", { status: "closed" });
+  assert.equal(missing, null);
+});
+
+test("handoff summary is capped to 8000 chars on create and update", () => {
+  const store = new InMemoryIncidentStore();
+  const incident = store.createIncident(baseIncidentPayload());
+  const longSummary = "A".repeat(9000);
+
+  const createdWithLongSummary = store.createIncident({
+    ...baseIncidentPayload(),
+    handoffSummary: longSummary,
+  });
+  assert.equal(createdWithLongSummary.handoffSummary.length, 8000);
+
+  const updated = store.updateIncident(incident.id, { handoffSummary: longSummary });
+  assert.equal(updated?.handoffSummary.length, 8000);
+});

@@ -443,6 +443,199 @@ describe("RescueSight API routes", () => {
     assert.equal(handoffBody.timeline.aedStatus, "on_scene");
   });
 
+  test("voice tool endpoints support non-CV triage/incident/dispatch flow", async () => {
+    const manifestResponse = await fetch(`${baseUrl}/api/voice/tools/manifest`);
+    assert.equal(manifestResponse.status, 200);
+    const manifestBody = (await manifestResponse.json()) as {
+      tools: Array<{ name: string; path: string }>;
+    };
+    assert.ok(manifestBody.tools.some((tool) => tool.name === "incident_create"));
+    assert.ok(manifestBody.tools.some((tool) => tool.path === "/api/voice/tools/dispatch-create"));
+
+    const triageResponse = await fetch(`${baseUrl}/api/voice/tools/triage-evaluate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...baseAnswers,
+        responsive: false,
+        breathingNormal: false,
+      }),
+    });
+    assert.equal(triageResponse.status, 200);
+    const triageBody = (await triageResponse.json()) as {
+      triage: { result: { pathway: string } };
+    };
+    assert.equal(triageBody.triage.result.pathway, "possible_cardiac_arrest");
+
+    const incidentCreateResponse = await fetch(`${baseUrl}/api/voice/tools/incident-create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        answers: baseAnswers,
+        timeline: {
+          actionsTaken: {
+            emsCalled: true,
+          },
+        },
+        handoffSummary: "Voice session started.",
+      }),
+    });
+    assert.equal(incidentCreateResponse.status, 201);
+    const incidentCreateBody = (await incidentCreateResponse.json()) as {
+      incident: { id: string; source: string };
+    };
+    const incidentId = incidentCreateBody.incident.id;
+    assert.ok(incidentId);
+    assert.equal(incidentCreateBody.incident.source, "api");
+
+    const incidentGetResponse = await fetch(`${baseUrl}/api/voice/tools/incident-get`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ incidentId }),
+    });
+    assert.equal(incidentGetResponse.status, 200);
+
+    const incidentUpdateResponse = await fetch(`${baseUrl}/api/voice/tools/incident-update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        incidentId,
+        status: "closed",
+        timeline: {
+          aedStatus: "on_scene",
+          actionsTaken: {
+            aedArrived: true,
+          },
+        },
+        handoffSummary: "Voice tool marked incident closed.",
+      }),
+    });
+    assert.equal(incidentUpdateResponse.status, 200);
+    const incidentUpdateBody = (await incidentUpdateResponse.json()) as {
+      incident: { status: string; timeline: { aedStatus: string; actionsTaken: { aedArrived: boolean } } };
+    };
+    assert.equal(incidentUpdateBody.incident.status, "closed");
+    assert.equal(incidentUpdateBody.incident.timeline.aedStatus, "on_scene");
+    assert.equal(incidentUpdateBody.incident.timeline.actionsTaken.aedArrived, true);
+
+    const handoffResponse = await fetch(`${baseUrl}/api/voice/tools/incident-handoff-get`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ incidentId }),
+    });
+    assert.equal(handoffResponse.status, 200);
+    const handoffBody = (await handoffResponse.json()) as {
+      incidentId: string;
+      handoffSummary: string;
+    };
+    assert.equal(handoffBody.incidentId, incidentId);
+    assert.equal(handoffBody.handoffSummary, "Voice tool marked incident closed.");
+
+    const dispatchCreateResponse = await fetch(`${baseUrl}/api/voice/tools/dispatch-create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        questionnaire: {
+          responsiveness: "unresponsive",
+          breathing: "abnormal_or_absent",
+          pulse: "unknown",
+          severeBleeding: false,
+          majorTrauma: false,
+          notes: "Voice session escalation.",
+        },
+        location: {
+          label: "Demo lobby",
+          latitude: 37.8715,
+          longitude: -122.273,
+        },
+        personDownSignal: {
+          status: "uncertain",
+          confidence: 0.41,
+          source: "manual",
+        },
+        emergencyCallRequested: true,
+      }),
+    });
+    assert.equal(dispatchCreateResponse.status, 201);
+    const dispatchCreateBody = (await dispatchCreateResponse.json()) as {
+      request: { id: string; status: string };
+    };
+    assert.equal(dispatchCreateBody.request.status, "pending_review");
+
+    const dispatchGetResponse = await fetch(`${baseUrl}/api/voice/tools/dispatch-get`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId: dispatchCreateBody.request.id }),
+    });
+    assert.equal(dispatchGetResponse.status, 200);
+    const dispatchGetBody = (await dispatchGetResponse.json()) as {
+      request: { id: string };
+    };
+    assert.equal(dispatchGetBody.request.id, dispatchCreateBody.request.id);
+  });
+
+  test("voice tool endpoints return validation and not-found errors", async () => {
+    const invalidTriageResponse = await fetch(`${baseUrl}/api/voice/tools/triage-evaluate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ responsive: true }),
+    });
+    assert.equal(invalidTriageResponse.status, 400);
+
+    const invalidIncidentUpdateResponse = await fetch(`${baseUrl}/api/voice/tools/incident-update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "closed" }),
+    });
+    assert.equal(invalidIncidentUpdateResponse.status, 400);
+
+    const invalidDispatchGetResponse = await fetch(`${baseUrl}/api/voice/tools/dispatch-get`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId: "   " }),
+    });
+    assert.equal(invalidDispatchGetResponse.status, 400);
+
+    const missingIncidentResponse = await fetch(`${baseUrl}/api/voice/tools/incident-get`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ incidentId: "missing-incident-id" }),
+    });
+    assert.equal(missingIncidentResponse.status, 404);
+  });
+
+  test("voice tool endpoints enforce shared-secret auth when configured", async () => {
+    const { app: securedApp } = buildApp({ voiceToolSecret: "tool-secret" });
+    const securedServer = securedApp.listen(0);
+    const securedAddress = securedServer.address() as AddressInfo;
+    const securedBaseUrl = `http://127.0.0.1:${securedAddress.port}`;
+
+    try {
+      const unauthorized = await fetch(`${securedBaseUrl}/api/voice/tools/manifest`);
+      assert.equal(unauthorized.status, 401);
+
+      const headerAuthorized = await fetch(`${securedBaseUrl}/api/voice/tools/manifest`, {
+        headers: { "x-rescuesight-tool-secret": "tool-secret" },
+      });
+      assert.equal(headerAuthorized.status, 200);
+
+      const bearerAuthorized = await fetch(`${securedBaseUrl}/api/voice/tools/manifest`, {
+        headers: { Authorization: "Bearer tool-secret" },
+      });
+      assert.equal(bearerAuthorized.status, 200);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        securedServer.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
+  });
+
   test("xr hooks create/update triage state and expose overlay view", async () => {
     const createResponse = await fetch(`${baseUrl}/api/xr/triage`, {
       method: "POST",
