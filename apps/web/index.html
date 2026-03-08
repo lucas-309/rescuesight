@@ -4,9 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RescueSight - Guided Emergency Response</title>
+    <script src="https://unpkg.com/@elevenlabs/convai-widget-embed@0.10.2" type="text/javascript"></script>
   </head>
   <body>
     <div id="root"></div>
+    <elevenlabs-convai
+      agent-id="agent_0701kk51qtqvfm1v00ah9c5hvfcx"
+      variant="expandable"
+      dismissible="true"
+      action-text="Voice CPR guide"
+      start-call-text="Start"
+    ></elevenlabs-convai>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

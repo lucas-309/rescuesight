@@ -92,6 +92,18 @@ export RESCUESIGHT_CV_SERVICE_URL="http://127.0.0.1:8091"
 
 Then start API with `npm run dev:api` and submit `cvSignal` with XR triage payloads.
 
+## ElevenLabs Voice Assistant
+
+The web app includes an ElevenLabs ConvAI voice widget (bottom-right) that receives live CV signals and gives real-time CPR guidance. **Simple flow: tap "Voice CPR guide" → tap "Start" → the AI speaks first. No need to say hello.**
+
+**Agent configuration (ElevenLabs dashboard):**
+
+1. In the [ElevenLabs ConvAI dashboard](https://elevenlabs.io/app/conversational-ai), edit agent `agent_0701kk51qtqvfm1v00ah9c5hvfcx`.
+2. **First message / greeting**: Set the agent to speak first when the conversation starts. Example: *"I'm your CPR guide. I can see your live camera feed. I'll give you step-by-step instructions. Let's start—place your hands in the center of the chest, between the nipples."* This ensures the user gets immediate guidance without having to say anything.
+3. **System prompt**: Add `{{cv_context}}` if your plan supports dynamic variables. The app passes person-down status, hand placement, compression BPM, rhythm quality, visibility, and location so the agent can give targeted instructions (e.g. "move your hands to the center", "compress faster, aim for 100–120 BPM").
+4. **Public access**: Ensure the agent is public with authentication disabled (Advanced tab).
+5. **Allowed domains**: Add `localhost:5173`, `127.0.0.1:5173`, and your network IP (e.g. `10.111.5.4:5173`) in the Security tab.
+
 ## Implemented Demo Features
 
 - CV person-down intake endpoint (`POST /api/cv/person-down`) with confidence-based questionnaire gating
