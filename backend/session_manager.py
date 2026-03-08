@@ -18,6 +18,7 @@ from .contracts import (
     Speaker,
     TimelineEvent,
     TranscriptEntry,
+    VoiceInstructionContext,
 )
 from .incident_schema import (
     build_incident_schema,
@@ -318,6 +319,56 @@ class SessionManager:
 
         return snapshot
 
+    def begin_reassessment(
+        self,
+        *,
+        incident_id: str,
+        timestamp: str | None = None,
+    ) -> Incident:
+        if not isinstance(incident_id, str) or not incident_id.strip():
+            raise ValueError("incident_id must be a non-empty string")
+
+        normalized_timestamp = self._normalize_timestamp(timestamp)
+
+        with self._lock:
+            incident = self._incidents.get(incident_id)
+            if incident is None:
+                raise ValueError(f"incident_id '{incident_id}' was not found")
+
+            if incident["current_state"] not in {"CPR_ACTIVE", "CPR_INSTRUCTIONS", "REASSESSMENT"}:
+                raise ValueError("reassessment can only begin during a CPR workflow")
+
+            if incident["cpr_active"]:
+                previous_state = incident["current_state"]
+                incident["cpr_active"] = False
+                incident["timeline"].append(
+                    self._build_event_payload(
+                        event_type="CPR_STOPPED",
+                        data={
+                            "previous_state": previous_state,
+                            "reason": "reassessment_started",
+                        },
+                        timestamp=normalized_timestamp,
+                    )
+                )
+
+            if incident["responsiveness_status"] not in {"unresponsive", "not_sure"}:
+                raise ValueError(
+                    "reassessment is only valid when responsiveness is unresolved or unresponsive"
+                )
+
+            # During reassessment we reset breathing to unknown until the user answers again.
+            incident["breathing_status"] = "not_sure"
+            self._apply_protocol_state_transition(
+                incident,
+                timestamp=normalized_timestamp,
+                trigger="reassessment_started",
+            )
+            validate_incident_schema(incident)
+            snapshot = deepcopy(incident)
+
+        return snapshot
+
     def stop_cpr(
         self,
         *,
@@ -363,6 +414,126 @@ class SessionManager:
                 incident,
                 timestamp=normalized_timestamp,
                 trigger="cpr_stopped",
+            )
+            validate_incident_schema(incident)
+            snapshot = deepcopy(incident)
+
+        return snapshot
+
+    def get_next_instruction_context(
+        self,
+        *,
+        incident_id: str,
+        timestamp: str | None = None,
+    ) -> VoiceInstructionContext:
+        if not isinstance(incident_id, str) or not incident_id.strip():
+            raise ValueError("incident_id must be a non-empty string")
+
+        normalized_timestamp = self._normalize_timestamp(timestamp)
+
+        with self._lock:
+            incident = self._incidents.get(incident_id)
+            if incident is None:
+                raise ValueError(f"incident_id '{incident_id}' was not found")
+
+            self._apply_protocol_state_transition(
+                incident,
+                timestamp=normalized_timestamp,
+                trigger="context_requested",
+            )
+            context = self._build_voice_instruction_context(incident)
+            validate_incident_schema(incident)
+            snapshot = deepcopy(context)
+
+        return snapshot
+
+    def generate_incident_summary(
+        self,
+        *,
+        incident_id: str,
+        timestamp: str | None = None,
+    ) -> Incident:
+        if not isinstance(incident_id, str) or not incident_id.strip():
+            raise ValueError("incident_id must be a non-empty string")
+
+        normalized_timestamp = self._normalize_timestamp(timestamp)
+
+        with self._lock:
+            incident = self._incidents.get(incident_id)
+            if incident is None:
+                raise ValueError(f"incident_id '{incident_id}' was not found")
+
+            incident["incident_summary"] = self._compose_incident_summary(incident)
+            incident["timeline"].append(
+                self._build_event_payload(
+                    event_type="INCIDENT_SUMMARY_GENERATED",
+                    data={
+                        "summary_length": len(incident["incident_summary"]),
+                        "finalized": False,
+                    },
+                    timestamp=normalized_timestamp,
+                )
+            )
+            validate_incident_schema(incident)
+            snapshot = deepcopy(incident)
+
+        return snapshot
+
+    def finalize_session(
+        self,
+        *,
+        incident_id: str,
+        timestamp: str | None = None,
+    ) -> Incident:
+        if not isinstance(incident_id, str) or not incident_id.strip():
+            raise ValueError("incident_id must be a non-empty string")
+
+        normalized_timestamp = self._normalize_timestamp(timestamp)
+
+        with self._lock:
+            incident = self._incidents.get(incident_id)
+            if incident is None:
+                raise ValueError(f"incident_id '{incident_id}' was not found")
+
+            if incident["cpr_active"]:
+                previous_state = incident["current_state"]
+                incident["cpr_active"] = False
+                incident["timeline"].append(
+                    self._build_event_payload(
+                        event_type="CPR_STOPPED",
+                        data={
+                            "previous_state": previous_state,
+                            "reason": "session_finalized",
+                        },
+                        timestamp=normalized_timestamp,
+                    )
+                )
+
+            if incident["current_state"] != "SESSION_END":
+                previous_state = incident["current_state"]
+                incident["current_state"] = "SESSION_END"
+                incident["timeline"].append(
+                    self._build_event_payload(
+                        event_type="STATE_CHANGED",
+                        data={
+                            "previous_state": previous_state,
+                            "new_state": "SESSION_END",
+                            "trigger": "session_finalized",
+                        },
+                        timestamp=normalized_timestamp,
+                    )
+                )
+
+            incident["incident_summary"] = self._compose_incident_summary(incident)
+            incident["timeline"].append(
+                self._build_event_payload(
+                    event_type="INCIDENT_SUMMARY_GENERATED",
+                    data={
+                        "summary_length": len(incident["incident_summary"]),
+                        "finalized": True,
+                    },
+                    timestamp=normalized_timestamp,
+                )
             )
             validate_incident_schema(incident)
             snapshot = deepcopy(incident)
@@ -517,3 +688,93 @@ class SessionManager:
         if breathing_status == "abnormal_or_absent":
             return "CPR_INSTRUCTIONS"
         return "REASSESSMENT"
+
+    def _build_voice_instruction_context(self, incident: Incident) -> VoiceInstructionContext:
+        state = incident["current_state"]
+        expected_response_field: str | None = None
+        allowed_responses: list[str] = []
+        next_action: str | None = None
+
+        if state in {"SESSION_START", "RESPONSIVENESS_CHECK"}:
+            prompt = "Is the person responsive?"
+            expected_response_field = "responsiveness_status"
+            allowed_responses = list(RESPONSIVENESS_STATUSES)
+            next_action = "record_user_response"
+        elif state == "BREATHING_CHECK":
+            prompt = "Is the person breathing normally?"
+            expected_response_field = "breathing_status"
+            allowed_responses = list(BREATHING_STATUSES)
+            next_action = "record_user_response"
+        elif state == "CPR_INSTRUCTIONS":
+            prompt = (
+                "Start chest compressions now. Press hard and fast in the center of the chest."
+            )
+            next_action = "start_cpr"
+        elif state == "CPR_ACTIVE":
+            prompt = "Continue chest compressions at a steady rhythm. Reassess only when prompted."
+            next_action = "begin_reassessment"
+        elif state == "REASSESSMENT":
+            prompt = "Reassess now. Is the person breathing normally?"
+            expected_response_field = "breathing_status"
+            allowed_responses = list(BREATHING_STATUSES)
+            next_action = "record_user_response"
+        elif state == "WAIT_FOR_EMS":
+            prompt = "Keep monitoring the person and wait for emergency responders."
+        else:
+            prompt = "Session complete."
+
+        return {
+            "incident_id": incident["incident_id"],
+            "current_state": state,
+            "prompt": prompt,
+            "expected_response_field": expected_response_field,
+            "allowed_responses": allowed_responses,
+            "next_action": next_action,
+            "cpr_active": incident["cpr_active"],
+            "responsiveness_status": incident["responsiveness_status"],
+            "breathing_status": incident["breathing_status"],
+            "hand_position_status": incident["hand_position_status"],
+            "rhythm_status": incident["rhythm_status"],
+        }
+
+    def _compose_incident_summary(self, incident: Incident) -> str:
+        location = incident["location"] if incident["location"] is not None else "unknown"
+        responsiveness = (
+            incident["responsiveness_status"]
+            if incident["responsiveness_status"] is not None
+            else "unknown"
+        )
+        breathing = incident["breathing_status"] if incident["breathing_status"] is not None else "unknown"
+        cpr_started_time = incident["cpr_started_time"] or "not_started"
+
+        last_user_message = next(
+            (
+                entry["message"]
+                for entry in reversed(incident["transcript"])
+                if entry["speaker"] == "user"
+            ),
+            "none",
+        )
+        last_agent_message = next(
+            (
+                entry["message"]
+                for entry in reversed(incident["transcript"])
+                if entry["speaker"] == "agent"
+            ),
+            "none",
+        )
+
+        return (
+            f"Incident {incident['incident_id']} | "
+            f"start={incident['start_time']} | "
+            f"location={location} | "
+            f"state={incident['current_state']} | "
+            f"responsiveness={responsiveness} | "
+            f"breathing={breathing} | "
+            f"cpr_active={incident['cpr_active']} | "
+            f"cpr_started_time={cpr_started_time} | "
+            f"timeline_events={len(incident['timeline'])} | "
+            f"transcript_entries={len(incident['transcript'])} | "
+            f"last_user_message={last_user_message} | "
+            f"last_agent_message={last_agent_message}"
+        )

@@ -28,10 +28,15 @@ EventTypeName = Literal[
 
 ToolName = Literal[
     "get_location",
+    "get_next_instruction_context",
     "log_event",
     "update_incident_status",
     "record_user_response",
+    "start_cpr",
+    "stop_cpr",
+    "begin_reassessment",
     "generate_incident_summary",
+    "finalize_session",
 ]
 
 XrSignalType = Literal["hand_position", "compression_rhythm"]
@@ -67,10 +72,15 @@ EVENT_TYPE_NAMES: tuple[EventTypeName, ...] = (
 
 TOOL_NAMES: tuple[ToolName, ...] = (
     "get_location",
+    "get_next_instruction_context",
     "log_event",
     "update_incident_status",
     "record_user_response",
+    "start_cpr",
+    "stop_cpr",
+    "begin_reassessment",
     "generate_incident_summary",
+    "finalize_session",
 )
 
 XR_SIGNAL_TYPES: tuple[XrSignalType, ...] = ("hand_position", "compression_rhythm")
@@ -118,3 +128,17 @@ class Incident(TypedDict):
     transcript: list[TranscriptEntry]
     timeline: list[TimelineEvent]
     incident_summary: str | None
+
+
+class VoiceInstructionContext(TypedDict):
+    incident_id: str
+    current_state: StateName
+    prompt: str
+    expected_response_field: str | None
+    allowed_responses: list[str]
+    next_action: str | None
+    cpr_active: bool
+    responsiveness_status: ResponsivenessStatus | None
+    breathing_status: BreathingStatus | None
+    hand_position_status: HandPositionStatus | None
+    rhythm_status: RhythmStatus | None

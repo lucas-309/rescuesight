@@ -603,6 +603,175 @@ class SessionManagerTests(unittest.TestCase):
                 breathing_detected="yes",  # type: ignore[arg-type]
             )
 
+    def test_begin_reassessment_transitions_to_reassessment_state(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="responsiveness",
+            response_value="unresponsive",
+        )
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="abnormal",
+        )
+        manager.start_cpr(incident_id=incident["incident_id"])
+
+        updated = manager.begin_reassessment(
+            incident_id=incident["incident_id"],
+            timestamp="2026-03-07T00:01:00Z",
+        )
+
+        self.assertFalse(updated["cpr_active"])
+        self.assertEqual(updated["breathing_status"], "not_sure")
+        self.assertEqual(updated["current_state"], "REASSESSMENT")
+        self.assertEqual(updated["timeline"][-2]["event_type"], "CPR_STOPPED")
+        self.assertEqual(updated["timeline"][-1]["event_type"], "STATE_CHANGED")
+
+    def test_begin_reassessment_rejects_invalid_state(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        with self.assertRaises(ValueError):
+            manager.begin_reassessment(incident_id=incident["incident_id"])
+
+    def test_begin_reassessment_rejects_unknown_incident(self) -> None:
+        manager = SessionManager()
+
+        with self.assertRaises(ValueError):
+            manager.begin_reassessment(incident_id="missing-id")
+
+    def test_get_next_instruction_context_returns_responsiveness_prompt(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+
+        context = manager.get_next_instruction_context(
+            incident_id=incident["incident_id"],
+            timestamp="2026-03-07T00:00:02Z",
+        )
+
+        self.assertEqual(context["current_state"], "RESPONSIVENESS_CHECK")
+        self.assertEqual(context["expected_response_field"], "responsiveness_status")
+        self.assertEqual(
+            context["allowed_responses"],
+            ["responsive", "unresponsive", "not_sure"],
+        )
+        self.assertEqual(context["next_action"], "record_user_response")
+
+    def test_get_next_instruction_context_for_cpr_instructions(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="responsiveness",
+            response_value="unresponsive",
+        )
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="abnormal",
+        )
+
+        context = manager.get_next_instruction_context(incident_id=incident["incident_id"])
+        self.assertEqual(context["current_state"], "CPR_INSTRUCTIONS")
+        self.assertEqual(context["next_action"], "start_cpr")
+        self.assertIsNone(context["expected_response_field"])
+
+    def test_get_next_instruction_context_rejects_unknown_incident(self) -> None:
+        manager = SessionManager()
+
+        with self.assertRaises(ValueError):
+            manager.get_next_instruction_context(incident_id="missing-id")
+
+    def test_generate_incident_summary_persists_summary_and_event(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session("Main Hall")
+        manager.log_transcript(
+            incident_id=incident["incident_id"],
+            speaker="agent",
+            message="Check responsiveness.",
+        )
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="responsiveness",
+            response_value="unresponsive",
+        )
+
+        updated = manager.generate_incident_summary(
+            incident_id=incident["incident_id"],
+            timestamp="2026-03-07T00:02:00Z",
+        )
+
+        self.assertIsNotNone(updated["incident_summary"])
+        assert updated["incident_summary"] is not None
+        self.assertIn("Incident ", updated["incident_summary"])
+        self.assertIn("location=Main Hall", updated["incident_summary"])
+        self.assertEqual(updated["timeline"][-1]["event_type"], "INCIDENT_SUMMARY_GENERATED")
+        self.assertFalse(updated["timeline"][-1]["data"]["finalized"])
+
+    def test_generate_incident_summary_rejects_unknown_incident(self) -> None:
+        manager = SessionManager()
+
+        with self.assertRaises(ValueError):
+            manager.generate_incident_summary(incident_id="missing-id")
+
+    def test_finalize_session_sets_terminal_state_and_summary(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session("Lobby")
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="responsiveness",
+            response_value="unresponsive",
+        )
+        manager.record_user_response(
+            incident_id=incident["incident_id"],
+            response_field="breathing",
+            response_value="abnormal",
+        )
+        manager.start_cpr(incident_id=incident["incident_id"])
+
+        updated = manager.finalize_session(
+            incident_id=incident["incident_id"],
+            timestamp="2026-03-07T00:03:00Z",
+        )
+
+        self.assertEqual(updated["current_state"], "SESSION_END")
+        self.assertFalse(updated["cpr_active"])
+        self.assertIsNotNone(updated["incident_summary"])
+        assert updated["incident_summary"] is not None
+        self.assertIn("state=SESSION_END", updated["incident_summary"])
+        self.assertEqual(updated["timeline"][-1]["event_type"], "INCIDENT_SUMMARY_GENERATED")
+        self.assertTrue(updated["timeline"][-1]["data"]["finalized"])
+
+    def test_finalize_session_is_idempotent_for_terminal_state_transition(self) -> None:
+        manager = SessionManager()
+        incident = manager.start_session()
+        first = manager.finalize_session(incident_id=incident["incident_id"])
+        second = manager.finalize_session(incident_id=incident["incident_id"])
+
+        first_state_changed_count = len(
+            [event for event in first["timeline"] if event["event_type"] == "STATE_CHANGED"]
+        )
+        second_state_changed_count = len(
+            [event for event in second["timeline"] if event["event_type"] == "STATE_CHANGED"]
+        )
+
+        self.assertEqual(first["current_state"], "SESSION_END")
+        self.assertEqual(second["current_state"], "SESSION_END")
+        self.assertEqual(first_state_changed_count, 1)
+        self.assertEqual(second_state_changed_count, 1)
+        self.assertEqual(
+            len([event for event in second["timeline"] if event["event_type"] == "INCIDENT_SUMMARY_GENERATED"]),
+            2,
+        )
+
+    def test_finalize_session_rejects_unknown_incident(self) -> None:
+        manager = SessionManager()
+
+        with self.assertRaises(ValueError):
+            manager.finalize_session(incident_id="missing-id")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,7 @@ from .contracts import (
     Incident,
     TimelineEvent,
     TranscriptEntry,
+    VoiceInstructionContext,
 )
 from .incident_schema import (
     INCIDENT_FIELD_NAMES,
@@ -38,6 +39,7 @@ __all__ = [
     "TRANSCRIPT_FIELD_NAMES",
     "TimelineEvent",
     "TranscriptEntry",
+    "VoiceInstructionContext",
     "XR_SIGNAL_TYPES",
     "build_incident_schema",
     "normalize_location",

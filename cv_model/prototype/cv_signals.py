@@ -72,6 +72,8 @@ class CprTargetStabilizer:
         min_conf_for_tracking: float = 0.40,
         recenter_frames_required: int = 8,
         recenter_distance: float = 0.12,
+        tracking_alpha: float = 0.26,
+        max_tracking_boost: float = 0.34,
     ) -> None:
         self.max_fallback_frames = max_fallback_frames
         self.lock_conf_threshold = lock_conf_threshold
@@ -81,6 +83,8 @@ class CprTargetStabilizer:
         self.min_conf_for_tracking = min_conf_for_tracking
         self.recenter_frames_required = recenter_frames_required
         self.recenter_distance = recenter_distance
+        self.tracking_alpha = _clamp(tracking_alpha, 0.05, 0.95)
+        self.max_tracking_boost = _clamp(max_tracking_boost, 0.0, 0.90)
 
         self._locked_target: Optional[CprTarget] = None
         self._locked_confidence = 0.0
@@ -187,6 +191,22 @@ class CprTargetStabilizer:
             )
 
         live_displacement = distance(self._locked_target.center, live_target.center)
+        displacement_ratio = (
+            0.0
+            if self.recenter_distance <= 1e-6
+            else _clamp(live_displacement / self.recenter_distance, 0.0, 1.8)
+        )
+        adaptive_alpha = self.tracking_alpha + self.max_tracking_boost * displacement_ratio
+        conf_scale = _clamp(
+            (live_confidence - self.unlock_conf_threshold) / max(1e-6, 1.0 - self.unlock_conf_threshold),
+            0.2,
+            1.0,
+        )
+        adaptive_alpha = _clamp(adaptive_alpha * conf_scale, 0.08, 0.86)
+
+        # Continuously track the live chest target to avoid sticky overlay lag.
+        self._locked_target = self._blend_target(self._locked_target, live_target, adaptive_alpha)
+
         if live_displacement <= self.recenter_distance * 0.55:
             self._recenter_samples.clear()
             self._locked_confidence = max(self._locked_confidence * 0.90, live_confidence)
@@ -225,6 +245,23 @@ class CprTargetStabilizer:
             isLocked=True,
             usingFallback=False,
         )
+
+    @staticmethod
+    def _blend_target(current: CprTarget, target: CprTarget, alpha: float) -> CprTarget:
+        blend = _clamp(alpha, 0.0, 1.0)
+        center = Point2D(
+            x=current.center.x + (target.center.x - current.center.x) * blend,
+            y=current.center.y + (target.center.y - current.center.y) * blend,
+        )
+        scale = current.palmScale + (target.palmScale - current.palmScale) * blend
+        angle_delta = CprTargetStabilizer._shortest_angle_delta(current.angleDeg, target.angleDeg)
+        angle = current.angleDeg + angle_delta * blend
+        return CprTarget(center=center, angleDeg=angle, palmScale=scale)
+
+    @staticmethod
+    def _shortest_angle_delta(from_angle: float, to_angle: float) -> float:
+        delta = (to_angle - from_angle + 180.0) % 360.0 - 180.0
+        return delta
 
     @staticmethod
     def _aggregate_samples(
@@ -460,44 +497,79 @@ def estimate_cpr_target(pose_landmarks: Optional[Sequence[object]]) -> tuple[Opt
 
     left_shoulder = _landmark_at(pose_landmarks, LEFT_SHOULDER)
     right_shoulder = _landmark_at(pose_landmarks, RIGHT_SHOULDER)
-    left_hip = _landmark_at(pose_landmarks, LEFT_HIP)
-    right_hip = _landmark_at(pose_landmarks, RIGHT_HIP)
-
-    if not all([left_shoulder, right_shoulder, left_hip, right_hip]):
+    if not all([left_shoulder, right_shoulder]):
         return None, 0.0
 
-    visibilities = [
-        float(getattr(left_shoulder, "visibility", 0.0)),
-        float(getattr(right_shoulder, "visibility", 0.0)),
-        float(getattr(left_hip, "visibility", 0.0)),
-        float(getattr(right_hip, "visibility", 0.0)),
-    ]
-    avg_visibility = sum(visibilities) / len(visibilities)
-
     shoulder_mid = _midpoint(left_shoulder, right_shoulder)
-    hip_mid = _midpoint(left_hip, right_hip)
-
-    torso_dx = hip_mid.x - shoulder_mid.x
-    torso_dy = hip_mid.y - shoulder_mid.y
-    torso_len = hypot(torso_dx, torso_dy)
     shoulder_span = distance(
         Point2D(float(left_shoulder.x), float(left_shoulder.y)),
         Point2D(float(right_shoulder.x), float(right_shoulder.y)),
     )
-    if torso_len < 1e-6 or shoulder_span < 1e-6:
+    if shoulder_span < 1e-6:
         return None, 0.0
 
-    # Lower-half sternum target for CPR hand placement.
-    cpr_center = Point2D(
-        x=shoulder_mid.x + torso_dx * 0.38,
-        y=shoulder_mid.y + torso_dy * 0.38,
-    )
-    angle_deg = degrees(atan2(torso_dy, torso_dx))
-    palm_scale = _clamp(shoulder_span * 0.24, 0.035, 0.12)
+    left_hip = _landmark_at(pose_landmarks, LEFT_HIP)
+    right_hip = _landmark_at(pose_landmarks, RIGHT_HIP)
+    available_hips = [hip for hip in (left_hip, right_hip) if hip is not None]
 
-    torso_score = _clamp(torso_len / 0.30, 0.0, 1.0)
-    confidence = 0.75 * avg_visibility + 0.25 * torso_score
-    if confidence < 0.30:
+    if available_hips:
+        if len(available_hips) == 2:
+            hip_mid = _midpoint(available_hips[0], available_hips[1])
+        else:
+            hip_mid = Point2D(x=float(available_hips[0].x), y=float(available_hips[0].y))
+
+        torso_dx = hip_mid.x - shoulder_mid.x
+        torso_dy = hip_mid.y - shoulder_mid.y
+        torso_len = hypot(torso_dx, torso_dy)
+        if torso_len >= 1e-6:
+            cpr_center = Point2D(
+                x=_clamp(shoulder_mid.x + torso_dx * 0.38, 0.0, 1.0),
+                y=_clamp(shoulder_mid.y + torso_dy * 0.38, 0.0, 1.0),
+            )
+            angle_deg = degrees(atan2(torso_dy, torso_dx))
+            palm_scale = _clamp(shoulder_span * 0.24, 0.035, 0.12)
+
+            visibilities = [
+                float(getattr(left_shoulder, "visibility", 0.0)),
+                float(getattr(right_shoulder, "visibility", 0.0)),
+                *[float(getattr(hip, "visibility", 0.0)) for hip in available_hips],
+            ]
+            avg_visibility = sum(visibilities) / len(visibilities)
+            torso_score = _clamp(torso_len / 0.30, 0.0, 1.0)
+            hip_multiplier = 1.0 if len(available_hips) == 2 else 0.82
+            confidence = (0.72 * avg_visibility + 0.28 * torso_score) * hip_multiplier
+            if confidence >= 0.24:
+                return CprTarget(center=cpr_center, angleDeg=angle_deg, palmScale=palm_scale), confidence
+
+    # Shoulder-only fallback for partial torso visibility.
+    shoulder_dx = float(right_shoulder.x) - float(left_shoulder.x)
+    shoulder_dy = float(right_shoulder.y) - float(left_shoulder.y)
+    normal_x = -shoulder_dy
+    normal_y = shoulder_dx
+    normal_len = hypot(normal_x, normal_y)
+    if normal_len < 1e-6:
+        return None, 0.0
+
+    normal_x /= normal_len
+    normal_y /= normal_len
+    if normal_y < 0.0:
+        normal_x *= -1.0
+        normal_y *= -1.0
+
+    sternum_offset = _clamp(shoulder_span * 0.58, 0.07, 0.16)
+    cpr_center = Point2D(
+        x=_clamp(shoulder_mid.x + normal_x * sternum_offset, 0.0, 1.0),
+        y=_clamp(shoulder_mid.y + normal_y * sternum_offset, 0.0, 1.0),
+    )
+    angle_deg = degrees(atan2(normal_y, normal_x))
+    palm_scale = _clamp(shoulder_span * 0.24, 0.035, 0.12)
+    shoulder_visibility = (
+        float(getattr(left_shoulder, "visibility", 0.0))
+        + float(getattr(right_shoulder, "visibility", 0.0))
+    ) / 2.0
+    shoulder_span_score = _clamp(shoulder_span / 0.16, 0.0, 1.0)
+    confidence = _clamp(0.55 * shoulder_visibility + 0.25 * shoulder_span_score + 0.05, 0.0, 1.0) * 0.82
+    if confidence < 0.22:
         return None, confidence
 
     return CprTarget(center=cpr_center, angleDeg=angle_deg, palmScale=palm_scale), confidence
