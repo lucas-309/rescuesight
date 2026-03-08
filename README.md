@@ -45,9 +45,34 @@ npm run dev:api
 npm run dev:web
 ```
 
-4. Open `http://localhost:5173`.
+4. Run the React Native iPhone frontend (Expo):
 
-5. Stream live CV stats to API (for frontend live summary):
+```bash
+npm run dev:mobile
+```
+
+Set `EXPO_PUBLIC_API_BASE_URL` to your API host before launching on a physical iPhone, for example:
+
+```bash
+EXPO_PUBLIC_API_BASE_URL="http://192.168.1.50:8080" npm run dev:mobile
+```
+
+Grant camera permission on first launch; the mobile app streams iPhone camera frames to:
+- `POST /api/cv/live-signal`
+- then reads status from `GET /api/cv/live-summary`
+
+If your CV model uses another ingest endpoint, set `EXPO_PUBLIC_CV_FRAME_POST_URL` when launching mobile.
+Set `EXPO_PUBLIC_CV_MODEL_FRAME_URL` to your CV model frame-analysis endpoint to enable true model-driven mobile overlays.
+
+5. Open `http://localhost:5173` for the web dashboard if needed.
+
+To mirror the mobile frontend on your Mac browser during phone testing:
+
+```bash
+npm run dev:mobile:web
+```
+
+6. Stream live CV stats to API (for frontend live summary):
 
 ```bash
 cd cv_model/prototype

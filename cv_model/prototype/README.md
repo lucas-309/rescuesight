@@ -109,11 +109,37 @@ Service endpoints:
 
 - `GET /health`
 - `POST /api/cv/evaluate`
+- `POST /api/cv/frame` (accepts `imageDataUrl` from mobile camera, returns `{ signal, cvAssist }`)
+
+Example `POST /api/cv/frame` body:
+
+```json
+{
+  "imageDataUrl": "data:image/jpeg;base64,...",
+  "frameTimestampMs": 1731000000,
+  "sourceDeviceId": "iphone-rescuesight"
+}
+```
+
+`/api/cv/frame` response now also includes an `overlay` object with normalized coordinates:
+- `overlay.handCenter` (x/y)
+- `overlay.chestTarget.center` (x/y)
+- `overlay.chestTarget.angleDeg`
+- `overlay.chestTarget.palmScale`
 
 On first run, the script automatically downloads these pre-trained MediaPipe task models into `cv_model/prototype/models/`:
 
 - `pose_landmarker_lite.task`
 - `hand_landmarker.task`
+- `face_landmarker.task`
+
+If model download fails with SSL certificate errors on macOS, run:
+
+```bash
+/Applications/Python\ 3.12/Install\ Certificates.command
+```
+
+or manually download the model files to `cv_model/prototype/models/` using `curl`.
 
 Optional flags:
 
