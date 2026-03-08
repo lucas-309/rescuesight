@@ -5,7 +5,7 @@
 - Keep emergency workflow logic deterministic and auditable.
 - Keep one primary human operator surface to reduce workflow ambiguity.
 - Separate CV sensing, API state, and UI actions with clear ownership.
-- Preserve extension points for XR overlays, mobile capture, and RAG support.
+- Preserve extension points for XR overlays and RAG support.
 
 ## System Boundaries
 
@@ -57,13 +57,7 @@ Mode guidance:
 Additional component:
 - `cv_service.py` provides CV assist endpoint for XR hook integration (`/api/cv/evaluate`, `/api/cv/frame`).
 
-## 4) `apps/mobile` (Optional Camera Client)
-
-Responsibilities:
-- Capture iPhone camera frames and stream them to CV/API endpoints.
-- Render mobile-focused visual guidance using model overlay output.
-
-## 5) `packages/shared` (Contracts)
+## 4) `packages/shared` (Contracts)
 
 Responsibilities:
 - Shared types for triage, XR hooks, CV live summary, and dispatch.
@@ -82,13 +76,12 @@ Responsibilities:
 
 ## Optional Flows
 
-- Mobile camera ingestion can replace or complement webcam worker for live signal inputs.
 - XR clients can use `POST /api/xr/triage` and associated overlay endpoints with CV checkpoint gating.
 
 ## Ownership Rules
 
 - Human decision/action ownership: web UI.
-- CV sensing ownership: CV worker/mobile clients.
+- CV sensing ownership: CV worker.
 - State ownership: API.
 - Safety-language ownership: all surfaces, enforced by product copy and validation conventions.
 

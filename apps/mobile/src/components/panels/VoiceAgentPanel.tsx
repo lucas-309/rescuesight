@@ -100,7 +100,7 @@ export const VoiceAgentPanel = ({ summary }: VoiceAgentPanelProps) => {
   const unsupportedMessage =
     Platform.OS === "web"
       ? "Voice agent panel is intended for iOS/Android app runtime. Use web dashboard widget on desktop."
-      : "Voice panel requires react-native-webview. Install it with: npx expo install react-native-webview";
+      : "Voice panel requires react-native-webview. Install from repo root: npm install --workspace @rescuesight/mobile react-native-webview";
 
   return (
     <>
