@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ElevenLabsConvAI } from "./ElevenLabsConvAI";
 import type {
   CreateDispatchRequest,
   CvLiveSummary,
@@ -430,6 +431,15 @@ export const App = () => {
         </p>
       </header>
 
+      <section className="voice-guide-banner" aria-label="Voice assistant instructions">
+        <h2 className="voice-guide-title">Voice CPR guide</h2>
+        <p className="voice-guide-steps">
+          <strong>1.</strong> Tap the &quot;Voice CPR guide&quot; button (bottom right).{" "}
+          <strong>2.</strong> Tap &quot;Start&quot;.{" "}
+          <strong>3.</strong> The AI will speak first—no need to say hello. Follow the voice instructions.
+        </p>
+      </section>
+
       <section className="panel">
         <h2>1) Live CV Summary</h2>
         <p className="helper-text">
@@ -775,6 +785,8 @@ export const App = () => {
 
         {queueStatus ? <p className="status-message">{queueStatus}</p> : null}
       </section>
+
+      <ElevenLabsConvAI liveSummary={liveSummary} />
     </main>
   );
 };

@@ -41,6 +41,30 @@ body {
   color: #d8f5e6;
 }
 
+.voice-guide-banner {
+  background: linear-gradient(135deg, #1a4d3a 0%, #2d7d58 100%);
+  color: #fff;
+  border-radius: 14px;
+  padding: 16px 20px;
+  margin-bottom: 18px;
+  border: 2px solid #3d9b6e;
+}
+
+.voice-guide-title {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+}
+
+.voice-guide-steps {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.voice-guide-steps strong {
+  color: #b8f0d4;
+}
+
 .panel {
   background: #ffffff;
   border-radius: 14px;
