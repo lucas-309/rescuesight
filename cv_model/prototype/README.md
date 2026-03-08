@@ -79,7 +79,8 @@ Run webcam and stream live CV summary into the API (used by web dashboard):
   --location-lon -122.2730
 ```
 
-Enable webcam voice guidance (default behavior) by setting Gemini key first:
+Webcam-native voice guidance is optional and disabled by default.
+To enable it, set Gemini key first and pass `--enable-voice-agent`:
 
 ```bash
 export GEMINI_API_KEY="<your_gemini_api_key>"
@@ -98,7 +99,7 @@ Provider selection:
 
 Microphone capture is provided by `sounddevice`; if unavailable, the voice agent falls back to proactive scene-only guidance and reports mic status in overlay.
 
-Then run bootstrap as usual. The voice agent starts automatically with `run_webcam.py`.
+Then run bootstrap and include `--enable-voice-agent` in webcam args.
 
 Equivalent env-style bootstrap:
 
@@ -179,7 +180,8 @@ Optional flags:
 - `--api-base-url http://127.0.0.1:8080` (enable `POST /api/dispatch/requests` on questionnaire completion)
 - `--disable-hitl` (recommended for primary web-owned operator flow)
 - `--questionnaire-cooldown-sec 30`
-- `--disable-voice-agent` (turn off webcam-native voice coach)
+- `--enable-voice-agent` (opt-in webcam-native voice coach)
+- `--disable-voice-agent` (deprecated alias; voice is disabled by default)
 - `--voice-provider auto|gemini|openai`
 - `--voice-low-latency / --no-voice-low-latency` (default: enabled; Gemini single-call audio+vision)
 - `--voice-proactive-interval-sec 8`

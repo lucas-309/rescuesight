@@ -10,11 +10,8 @@ import type {
   EmergencySessionStatus,
   SessionCvSignalRequest,
 } from "@rescuesight/shared";
-import { ElevenLabsConvAI } from "./ElevenLabsConvAI";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
-const ELEVENLABS_AGENT_ID = import.meta.env.VITE_ELEVENLABS_AGENT_ID ?? "agent_0701kk51qtqvfm1v00ah9c5hvfcx";
-const ELEVENLABS_WIDGET_ENABLED = (import.meta.env.VITE_ENABLE_ELEVENLABS_WIDGET ?? "true") !== "false";
 
 const toApiUrl = (path: string): string => {
   const base = API_BASE_URL.endsWith("/") ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
@@ -479,9 +476,7 @@ export const App = () => {
   };
 
   const dispatchUnitPlaceholder = (requestId: string) => {
-    setQueueStatus(
-      `Dispatch EMT clicked for ${requestId}. Placeholder only for now (no backend action yet).`,
-    );
+    setQueueStatus(`Dispatch EMT clicked for ${requestId}.`);
   };
 
   return (
@@ -584,22 +579,7 @@ export const App = () => {
       </section>
 
       <section className="panel">
-        <h2>2) Voice CPR Guide (Web Widget)</h2>
-        <p className="helper-text">
-          Browser voice assistant for dispatcher/bystander interaction. This is separate from the webcam-native
-          Python voice agent.
-        </p>
-        {ELEVENLABS_WIDGET_ENABLED ? (
-          <ElevenLabsConvAI agentId={ELEVENLABS_AGENT_ID} summary={liveSummary} />
-        ) : (
-          <p className="helper-text">
-            Voice widget disabled by env. Set <code>VITE_ENABLE_ELEVENLABS_WIDGET=true</code> to enable.
-          </p>
-        )}
-      </section>
-
-      <section className="panel">
-        <h2>3) Human-In-The-Loop Questionnaire</h2>
+        <h2>2) Human-In-The-Loop Questionnaire</h2>
         <p className="helper-text">
           Answer quick bystander checks. Escalation uses the latest live CV summary stats and
           location data.
@@ -749,7 +729,7 @@ export const App = () => {
       </section>
 
       <section className="panel">
-        <h2>4) Pseudo-Hospital Dispatch Dashboard</h2>
+        <h2>3) Pseudo-Hospital Dispatch Dashboard</h2>
         <div className="queue-toolbar">
           <label>
             Queue filter

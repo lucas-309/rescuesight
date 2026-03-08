@@ -57,13 +57,7 @@ npm run dev:web
 
 4. Open `http://localhost:5173`.
 
-5. Set voice-agent API key (Gemini preferred for webcam-native multimodal voice):
-
-```bash
-export GEMINI_API_KEY="<your_gemini_api_key>"
-```
-
-6. Stream live CV stats to API (for frontend live summary + webcam voice agent):
+5. Stream live CV stats to API (for frontend live summary):
 
 ```bash
 cd cv_model/prototype
@@ -101,17 +95,13 @@ VITE_ELEVENLABS_AGENT_ID="<your_agent_id>" npm run dev:web
 VITE_ENABLE_ELEVENLABS_WIDGET="false" npm run dev:web
 ```
 
-## Webcam Voice Agent
+## Webcam Voice Agent (Optional)
 
-`run_webcam.py` now starts a webcam-native multimodal voice coach by default.
+The primary voice path is the web dashboard ElevenLabs widget.
 
-- It consumes live webcam frames + CV metrics continuously.
-- It listens to nearby speech through microphone, transcribes it, and responds with combined speech+vision context.
-- It also produces proactive scene observations on a timer even without user speech.
-- To disable voice at runtime: `--disable-voice-agent`.
-- Provider is selected automatically (`gemini` when `GEMINI_API_KEY` is present, otherwise `openai`).
-- Low-latency mode is enabled by default for Gemini (`--voice-low-latency`), using single-call audio+vision responses.
-- If provider key is missing, CV keeps running and overlay shows voice-agent disabled status.
+- Webcam-native voice is now **disabled by default**.
+- If you explicitly want webcam-native voice for experiments, pass `--enable-voice-agent`.
+- Use `GEMINI_API_KEY` (or `OPENAI_API_KEY` for OpenAI mode) only when enabling webcam voice.
 
 ## Implemented Demo Features
 
@@ -132,7 +122,7 @@ CV worker highlights:
 - posture/eyes confidence smoothing plus trigger hysteresis to reduce false flicker
 - victim snapshot now flows through live CV summary and dispatch queue so dashboard cards show scene imagery
 - webcam-local questionnaire controls are available for legacy/debug runs, but are not the primary operator path
-- webcam-native multimodal voice coaching auto-starts with `run_webcam.py`
+- webcam-native multimodal voice coaching is optional and disabled by default
 - mobile app is currently paused from the active runtime stack
 
 ## API Endpoints
